@@ -30,7 +30,6 @@ def create_feature_points(data,nb_config,meas_to_keep):
 	nb_col = data.shape[1]
 	#print(int(nb_rows/nb_config))
 	
-	
 	data_extract = data.iloc[:,meas_to_keep]
 	
 	new_nb_r = nb_config
@@ -68,15 +67,17 @@ def plot_dendrogram(model, **kwargs):
 ###a function to perform agglomerative hierarchical clustering using scikit-learn defined functions
 ###it is configured to be displayable with the call to plot_dendogram
 ###data is the dataframe on which to apply the clustering algorithm
-def cluster_to_display(data, n_clusters=None, linkage='ward', affinity='euclidean', connectivity=None, compute_distances=False):
+def cluster_to_display(data, n_clust=None, link='ward', aff='euclidean', connect=None, cmpt_dist=False,threshold_dist=100):
 
-	model = AgglomerativeClustering(linkage='ward', affinity='euclidean', connectivity=None, n_clusters=None,distance_threshold=0)
+	model = AgglomerativeClustering(linkage=link, affinity=aff, connectivity=connect, n_clusters=n_clust, compute_distances=cmpt_dist, distance_threshold=threshold_dist)
 	m_to_plot=model.fit(data)
 	
 	plt.title('Hierarchical Clustering Dendrogram')
-	plot_dendrogram(model, truncate_mode='level', p=10)
+	plot_dendrogram(model, truncate_mode='level', p=20)
 	plt.xlabel("Number of points in node (or index of point if no parenthesis).")
 	plt.show()
+	print(model.labels_)
+	return model
 
 ###a function to perform agglomerative hierarchical clustering using scikit-learn defined functions
 ###calls can be customized, not sure if it is displayable though
@@ -85,4 +86,27 @@ def cluster(data, n_clusters=10, linkage='ward', affinity='euclidean', connectiv
 
 	model = AgglomerativeClustering(linkage=linkage, affinity=affinity, connectivity=connectivity, n_clusters=n_clusters)
 	cls=model.fit(data)
+	return model
+
+
+
+###################################################################
+###################################################################
+##tentative de comprehension pour automatisation de l'exploitation
+	
+def compare_two_meas(data, idx1, idx2,idx_meas):
+	meas1 = data[idx1][idx_meas]
+	meas2 = data[idx2][idx_meas]
+
+	print(meas1)
+	print(meas2)
+	
+	abs_diff = np.linalg.norm(meas1 - meas2)
+	print(abs_diff)
+
+def retrieve_idx_per_cluster(model):
+	idx_max = model.labels_
+	for i in range(model.n_clusters_):
+		cfg = [a for a,v in enumerate(model.labels_) if v == i]
+		print(str(i)+" : "+str(len(cfg))+" -> "+ str(cfg))
 

@@ -2,9 +2,10 @@ import argparse
 import pandas as pd
 from os import listdir
 
+import csv
+
 #other python script including all functions to perform clusters over a performance matrix
 import cluster
-
 
 
 ###load one csv file specified by its path and filename
@@ -75,8 +76,20 @@ def compute_index(all_data, nb_config):
 	idx = [i%nb_config for i in range(0,nb_rows)]
 	#idx = idx%nb_config
 	return idx
+	
+def save_config_clusters(output_dir,cfg_meas,idx1,idx2):
+	csvfile = open(output_dir+"comparison_"+str(idx1)+"_"+str(idx2)+".csv",'w',newline='')
+	cfgwriter = csv.writer(csvfile, delimiter=',',quotechar='|', quoting=csv.QUOTE_MINIMAL)
+	cfgwriter.writerow(cfg_meas.iloc[idx1])
+	cfgwriter.writerow(cfg_meas.iloc[idx2])
+	csvfile.close()
+	
 
 def main(args):
+
+	#store indexes of interest (retrieving performance values) to perform clustering and analyzes
+	index_interest = args.idx_interest
+
 	#load all data in a single dataframe
 	path = args.folder
 	ext = args.extension
@@ -100,13 +113,40 @@ def main(args):
 	#print(measures.shape)
 	
 	#create a dimension space in which each dimension corresponds to a measure observed from a test case
-	feature_pts = cluster.create_feature_points(measures, nb_data, [0])
+	feature_pts = cluster.create_feature_points(measures, nb_data, index_interest)
 	#print(feature_pts)
 	#apply clustering and disply dendogram
-	cluster.cluster_to_display(feature_pts)
+	cls = cluster.cluster_to_display(feature_pts)
 	#cluster.cluster(feature_pts)
-
-
+	
+	
+	
+	###################################################################
+	###################################################################
+	##tentative de comprehension pour automatisation de l'exploitation
+	cluster.retrieve_idx_per_cluster(cls)
+		
+	#print( str(len(cls.distances_)) + "   " + str(len(cls.children_)))
+	#print(cls.children_)
+	#print(cls.distances_)
+	#print(cls.distances_[0])
+	
+	#cluster.compare_two_meas(feature_pts,0,44,index_interest)
+	#cluster.compare_two_meas(feature_pts,66,55,index_interest)
+	
+	
+	output_dir = args.output_folder
+	idx1 = cls.children_[0, 0]
+	idx2 = cls.children_[0, 1]
+	
+	save_config_clusters(output_dir,perf_matrix,idx1,idx2)
+	
+	idx1 = cls.children_[1, 0]
+	idx2 = cls.children_[1, 1]
+	
+	save_config_clusters(output_dir,perf_matrix,idx1,idx2)
+	
+	
 ### managing arguments
 if __name__ == '__main__':
 	# Define arguments for cli and run main function
@@ -114,6 +154,8 @@ if __name__ == '__main__':
 	parser.add_argument('--folder', help="The path to folder to find data to load",default="../data/res_ugc/",type=str)
 	parser.add_argument('--extension', help="The extension file of files containing data",default="csv",type=str)
 	parser.add_argument('--nb_meas', help="The number of performance measures per configuration on a single test case",default=8,type=int)
+	parser.add_argument('--idx_interest', nargs='+', help="The indexes of the measures of performance to use to create clusters and analyze data. To use with multiple performance measures put the different indexes separated with spaces (e.g., to use with indexes 0 and 4 -> python3 main.py --idx_interest 0 4) all must be numerical",default=0,type=float)
+	parser.add_argument('--output_folder', help="Output folder to compare two different configurations that are clustered together", default="../results/diff_config/",type=str)
 	args = parser.parse_args()
 	main(args)
 
