@@ -84,6 +84,11 @@ def save_config_clusters(output_dir,cfg_meas,idx1,idx2):
 	cfgwriter.writerow(cfg_meas.iloc[idx2])
 	csvfile.close()
 	
+def save_pairs_and_distance(output_dir,children, distances, linkage="average", affinity="cosine"):
+    pd_data = pd.DataFrame(data=(children[:,0], children[:,1],distances))
+    pd_data_save = pd_data.T
+    csvfile = output_dir+"distances_and_pairs_link_"+str(linkage)+"_aff_"+str(affinity)+"_level20_distance0.csv"
+    pd_data_save.to_csv(csvfile)
 
 def main(args):
 
@@ -116,10 +121,14 @@ def main(args):
 	feature_pts = cluster.create_feature_points(measures, nb_data, index_interest)
 	#print(feature_pts)
 	#apply clustering and disply dendogram
+	link = 'ward'
+	aff = 'euclidean'
 	cls = cluster.cluster_to_display(feature_pts)
-	#cluster.cluster(feature_pts)
-	
-	
+	#cls = cluster.cluster_to_display(feature_pts, n_clust=None, link='average', aff='cosine', connect=None, cmpt_dist=False,threshold_dist=0)
+    
+    
+	output_dir = args.output_folder
+	save_pairs_and_distance(output_dir, cls.children_,cls.distances_,linkage = link, affinity = aff)
 	
 	###################################################################
 	###################################################################
@@ -135,7 +144,7 @@ def main(args):
 	#cluster.compare_two_meas(feature_pts,66,55,index_interest)
 	
 	
-	output_dir = args.output_folder
+	
 	idx1 = cls.children_[0, 0]
 	idx2 = cls.children_[0, 1]
 	
