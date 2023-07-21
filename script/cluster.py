@@ -76,14 +76,13 @@ def cluster_to_display(data, n_clust=None, link='ward', aff='euclidean', connect
 	plot_dendrogram(m_to_plot, truncate_mode='level', p=20)
 	plt.xlabel("Number of points in node (or index of point if no parenthesis).")
 	plt.show()
-	print(model.labels_)
+	
 	return model
 
 ###a function to perform agglomerative hierarchical clustering using scikit-learn defined functions
 ###calls can be customized, not sure if it is displayable though
 ###data is the dataframe on which to apply the clustering algorithm
 def cluster(data, n_clusters=10, linkage='ward', affinity='euclidean', connectivity=None, compute_distances=False):
-
 	model = AgglomerativeClustering(linkage=linkage, affinity=affinity, connectivity=connectivity, n_clusters=n_clusters)
 	cls=model.fit(data)
 	return model
@@ -98,11 +97,8 @@ def compare_two_meas(data, idx1, idx2,idx_meas):
 	meas1 = data[idx1][idx_meas]
 	meas2 = data[idx2][idx_meas]
 
-	print(meas1)
-	print(meas2)
 	
 	abs_diff = np.linalg.norm(meas1 - meas2)
-	print(abs_diff)
 
 def retrieve_idx_per_cluster(model):
 	idx_max = model.labels_

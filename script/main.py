@@ -13,7 +13,7 @@ import cluster
 ###return the number of line in the file and the data stored in the file
 def load_csv(path, filename):
 	filename = path+filename
-	data = pd.read_csv(filename)
+	data = pd.read_csv(filename,header=0)
 	nb_data = data.shape[0]
 	return data, nb_data
 
@@ -80,13 +80,17 @@ def compute_index(all_data, nb_config):
 def save_config_clusters(output_dir,cfg_meas,idx1,idx2):
 	csvfile = open(output_dir+"comparison_"+str(idx1)+"_"+str(idx2)+".csv",'w',newline='')
 	cfgwriter = csv.writer(csvfile, delimiter=',',quotechar='|', quoting=csv.QUOTE_MINIMAL)
+    
+	cfgwriter.writerow(cfg_meas.columns)
+    
+    
 	cfgwriter.writerow(cfg_meas.iloc[idx1])
 	cfgwriter.writerow(cfg_meas.iloc[idx2])
 	csvfile.close()
 	
-def save_pairs_and_distance(output_dir,children, distances, linkage="average", affinity="cosine"):
+def save_pairs_and_distance(output_dir, path, ext, children, distances, linkage="average", affinity="cosine"):
     pd_data = pd.DataFrame(data=(children[:,0], children[:,1],distances))
-    pd_data_save = pd_data.T
+    pd_data_save = pd_data.T    
     csvfile = output_dir+"distances_and_pairs_link_"+str(linkage)+"_aff_"+str(affinity)+"_level20_distance0.csv"
     pd_data_save.to_csv(csvfile)
 
@@ -123,12 +127,12 @@ def main(args):
 	#apply clustering and disply dendogram
 	link = 'ward'
 	aff = 'euclidean'
-	cls = cluster.cluster_to_display(feature_pts)
-	#cls = cluster.cluster_to_display(feature_pts, n_clust=None, link='average', aff='cosine', connect=None, cmpt_dist=False,threshold_dist=0)
+	#cls = cluster.cluster_to_display(feature_pts)
+	cls = cluster.cluster_to_display(feature_pts, n_clust=None, link='average', aff='cosine', connect=None, cmpt_dist=False,threshold_dist=0)
     
     
 	output_dir = args.output_folder
-	save_pairs_and_distance(output_dir, cls.children_,cls.distances_,linkage = link, affinity = aff)
+	save_pairs_and_distance("../results/diff_config/comparison_pair_cosine_sim_link_avg/", path, ext, cls.children_,cls.distances_,linkage = link, affinity = aff)
 	
 	###################################################################
 	###################################################################
@@ -144,16 +148,15 @@ def main(args):
 	#cluster.compare_two_meas(feature_pts,66,55,index_interest)
 	
 	
-	
-	idx1 = cls.children_[0, 0]
-	idx2 = cls.children_[0, 1]
-	
-	save_config_clusters(output_dir,perf_matrix,idx1,idx2)
-	
-	idx1 = cls.children_[1, 0]
-	idx2 = cls.children_[1, 1]
-	
-	save_config_clusters(output_dir,perf_matrix,idx1,idx2)
+	for i in range(len(cls.children_)):
+		idx1 = cls.children_[i, 0]
+		idx2 = cls.children_[i, 1]
+		save_config_clusters("../results/diff_config/comparison_pair_cosine_sim_link_avg/",perf_matrix,idx1,idx2)
+# 	
+# 	idx1 = cls.children_[1, 0]
+# 	idx2 = cls.children_[1, 1]
+# 	
+# 	save_config_clusters(output_dir,perf_matrix,idx1,idx2)
 	
 	
 ### managing arguments
