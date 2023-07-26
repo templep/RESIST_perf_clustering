@@ -75,7 +75,7 @@ def plot_dendrogram(model, **kwargs):
 ###a function to perform agglomerative hierarchical clustering using scikit-learn defined functions
 ###it is configured to be displayable with the call to plot_dendogram
 ###data is the dataframe on which to apply the clustering algorithm
-def cluster_to_display(data, n_clust=None, link='ward', aff='euclidean', connect=None, cmpt_dist=False,threshold_dist=0):
+def cluster_to_display(data, n_clust=None, link='average', aff='cosine', connect=None, cmpt_dist=False,threshold_dist=0):
 
 	model = AgglomerativeClustering(linkage=link, affinity=aff, connectivity=connect, n_clusters=n_clust, compute_distances=cmpt_dist, distance_threshold=threshold_dist)
 	m_to_plot=model.fit(data)
