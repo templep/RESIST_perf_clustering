@@ -1,6 +1,7 @@
 import argparse
 import pandas as pd
-from os import listdir
+from os import listdir, makedirs
+import os
 
 import csv
 
@@ -139,8 +140,9 @@ def main(args):
 	cls = cluster.cluster_to_display(feature_pts, n_clust=None, link=link, aff=aff, connect=None, cmpt_dist=True,threshold_dist=0)
     
 	## save all pairs of configurations that form the dendrogram with the distances of their performance but in different files
-	output_dir = args.output_folder
-	save_pairs_and_distance(output_dir+"comparison_pair_"+link+"_sim_"+aff+"_link_10_clusters/", path, ext, cls.children_,cls.distances_, linkage = link, affinity = aff)
+	output_dir = os.path.join(args.output_folder, "comparison_pair_"+link+"_sim_"+aff+"_link_10_clusters/")
+	makedirs(output_dir, exist_ok=True)
+	save_pairs_and_distance(output_dir, path, ext, cls.children_,cls.distances_, linkage = link, affinity = aff)
 	
 	###################################################################
 	###################################################################
@@ -159,7 +161,7 @@ def main(args):
 	for i in range(len(cls.children_)):
 		idx1 = cls.children_[i, 0]
 		idx2 = cls.children_[i, 1]
-		save_config_clusters("../results/diff_config/comparison_pair_cosine_sim_link_average_50_clusters/",perf_matrix,idx1,idx2)
+		save_config_clusters(output_dir, perf_matrix, idx1, idx2)
 # 	
 # 	idx1 = cls.children_[1, 0]
 # 	idx2 = cls.children_[1, 1]
@@ -174,7 +176,7 @@ if __name__ == '__main__':
 	parser.add_argument('--folder', help="The path to folder to find data to load",default="../data/res_ugc/",type=str)
 	parser.add_argument('--extension', help="The extension file of files containing data",default="csv",type=str)
 	parser.add_argument('--nb_meas', help="The number of performance measures per configuration on a single test case",default=8,type=int)
-	parser.add_argument('--idx_interest', nargs='+', help="The indexes of the measures of performance to use to create clusters and analyze data. To use with multiple performance measures put the different indexes separated with spaces (e.g., to use with indexes 0 and 4 -> python3 main.py --idx_interest 0 4) all must be numerical",default=0,type=float)
+	parser.add_argument('--idx_interest', nargs='+', help="The indexes of the measures of performance to use to create clusters and analyze data. To use with multiple performance measures put the different indexes separated with spaces (e.g., to use with indexes 0 and 4 -> python3 main.py --idx_interest 0 4) all must be numerical",default=[0],type=int)
 	parser.add_argument('--link', help="Defines the distance to use between clusters. Ultimately can help merging clusters together. See https://scikit-learn.org/stable/modules/generated/sklearn.cluster.AgglomerativeClustering.html for possible values",default="average",type=str)
 	parser.add_argument('--affinity', help="Defines the metric to use when calculating distance between instances in a feature array.  See https://scikit-learn.org/stable/modules/generated/sklearn.cluster.AgglomerativeClustering.html for possible values",default="cosine",type=str)
 	parser.add_argument('--output_folder', help="Output folder to compare two different configurations that are clustered together", default="../results/diff_config/",type=str)
