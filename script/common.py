@@ -4,6 +4,7 @@ from main import load_all_csv
 import numpy as np
 import os
 import datetime
+from scipy import stats
 
 
 def format_time(s):
@@ -213,3 +214,39 @@ def rank_difference_distance(measurements):
     # Calculate the absolute differences and sum along the B dimension
     vectorized_distance_matrix = np.sum(np.abs(expanded_ranks), axis=2)
     return vectorized_distance_matrix
+
+
+def stat_distance(measurements, stats_fn):
+    ranks = np.argsort(measurements, axis=1)
+    A = ranks.shape[0]
+    C = ranks.shape[2]
+
+    distance_matrix = np.zeros((A, A, C))
+
+    # There is no good vectorized version to apply,
+    # therefore we loop over all dimensions...
+    for c in range(C):
+        for i in range(A):
+            for j in range(i + 1, A):
+                try:
+                    res = stats_fn(ranks[i, :, c], ranks[j, :, c])
+                    stat, p_value = res.statistic, res.pvalue
+
+                    distance_matrix[i, j, c] = stat
+                    distance_matrix[j, i, c] = stat
+                except ValueError:
+                    # Mark as NaN in case of any other ValueError
+                    distance_matrix[i, j, c] = np.nan
+                    distance_matrix[j, i, c] = np.nan
+
+    return distance_matrix
+
+
+def kendalltau_distance(measurements):
+    # We clip negative values to 0, because we see them as different
+    # We invert such that lower values indicate higher correspondence
+    return 1 - (np.maximum(stat_distance(measurements, stats_fn=stats.kendalltau), 0))
+
+
+def wilcoxon_distance(measurements):
+    return stat_distance(measurements, stats_fn=stats.wilcoxon)
