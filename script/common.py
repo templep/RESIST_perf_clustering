@@ -89,7 +89,7 @@ def load_data(data_dir="../data/"):
 
     perf_matrix = pd.merge(
         meas_matrix, input_properties, left_on="inputname", right_on="name"
-    )
+    ).sort_values(by=["inputname", "configurationID"])
     del perf_matrix["name"]
     perf_matrix["rel_size"] = perf_matrix["size"] / perf_matrix["ORIG_SIZE"]
     # perf_matrix["rel_size"] = np.log(perf_matrix["rel_size"])  # To scale value distribution more evenly
@@ -121,6 +121,10 @@ def split_data(perf_matrix, test_size=0.15, verbose=True):
     train_inp, test_inp = train_test_split(
         perf_matrix["inputname"].unique(), test_size=test_size
     )
+    train_cfg.sort()
+    test_cfg.sort()
+    train_inp.sort()
+    test_inp.sort()
     train_data = perf_matrix[
         perf_matrix["configurationID"].isin(train_cfg)
         & perf_matrix["inputname"].isin(train_inp)
