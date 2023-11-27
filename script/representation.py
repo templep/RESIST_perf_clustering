@@ -230,37 +230,42 @@ optimizer = torch.optim.AdamW(
     list(input_emb.parameters()) + list(config_emb.parameters()), lr=0.0001
 )
 
-def make_batch(size):
+def make_batch_v2(size):
+    half_size = size // 2
+    sampled_ttinp = np.random.choice(ttinp, size=half_size, replace=False)
+    sampled_ttcfg = np.random.choice(ttcfg, size=half_size, replace=False)
     batch_idx = []
-    for i in range(size):
-        task = np.random.choice(4)
-        if task == 0:  # iii
-            params = np.random.choice(ttinp, size=3, replace=False)
-            triplet = iii_cmp_fn(*params)
-        elif task == 1:  # ccc
-            params = np.random.choice(ttcfg, size=3, replace=False)
-            triplet = ccc_cmp_fn(*params)
-        elif task == 2:  # icc
-            inp = np.random.choice(ttinp)
-            cfgs = np.random.choice(ttcfg, size=2, replace=False)
-            triplet = icc_cmp_fn(inp, *cfgs)
-        else:  # cii
-            cfg = np.random.choice(ttcfg)
-            inps = np.random.choice(ttinp, size=2, replace=False)
-            triplet = cii_cmp_fn(cfg, *inps)
-        
-        t, a, p, n = triplet
-        batch_idx.append(
-            (
-                t[0] == "i",
-                input_map[a] if t[0] == "i" else config_map[a],
-                t[1] == "i",
-                input_map[p] if t[1] == "i" else config_map[p],
-                t[2] == "i",
-                input_map[n] if t[2] == "i" else config_map[n],
-            )
+    
+    # iii task
+    for inp1, inp2, inp3 in itertools.combinations(sampled_ttinp, 3):
+        batch_idx.append(iii_cmp_fn(inp1, inp2, inp3))
+    
+    # ccc task
+    for cfg1, cfg2, cfg3 in itertools.combinations(sampled_ttcfg, 3):
+        batch_idx.append(ccc_cmp_fn(cfg1, cfg2, cfg3))
+    
+    # icc task
+    for inp in sampled_ttinp:
+        for cfg1, cfg2 in itertools.combinations(sampled_ttcfg, 2):
+            batch_idx.append(icc_cmp_fn(inp, cfg1, cfg2))
+    
+    # cii task
+    for cfg in sampled_ttcfg:
+        for inp1, inp2 in itertools.combinations(sampled_ttinp, 2):
+            batch_idx.append(cii_cmp_fn(cfg, inp1, inp2))
+    
+    # Convert to indices and tensor
+    batch_idx = [
+        (
+            t[0] == "i",
+            input_map[a] if t[0] == "i" else config_map[a],
+            t[1] == "i",
+            input_map[p] if t[1] == "i" else config_map[p],
+            t[2] == "i",
+            input_map[n] if t[2] == "i" else config_map[n],
         )
-
+        for t, a, p, n in batch_idx
+    ]
     return torch.tensor(batch_idx)
 
 
