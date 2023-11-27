@@ -160,21 +160,19 @@ pickle.dump((ttinp, ttcfg, pairs), open("data.p", "wb"))
 # Dataset creation ends
 
 # %%
-class TripletDataset(torch.utils.data.Dataset):
-    # TODO Switch to iterable dataset?
-    def __init__(self, input_features, config_features):
-        self.num_inputs = input_features.shape[0]
-        self.num_configs = config_features.shape[0]
-
+class TripletDataset(torch.utils.data.IterableDataset):
+    def __init__(self, input_features, config_features, pairs):
+        super(TripletDataset, self).__init__()
         self.input_features = input_features
         self.config_features = config_features
+        self.pairs = pairs
 
-    def __len__(self):
-        # TODO Calculate max. length
-        return 12345
-    
-    def __getitem__(self, idx):
-        return None, None
+    def __iter__(self):
+        for t, a, p, n in self.pairs:
+            anchor = self.input_features[a] if t[0] == 'i' else self.config_features[a]
+            positive = self.input_features[p] if t[1] == 'i' else self.config_features[p]
+            negative = self.input_features[n] if t[2] == 'i' else self.config_features[n]
+            yield anchor, positive, negative
 
 # %%
 
