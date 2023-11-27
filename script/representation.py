@@ -63,8 +63,8 @@ rank_map = input_config_map.groupby("inputname").transform(
 average_ranks = rank_map.mean(axis=1)
 
 # %%
-ttinp = train_inp #[:100]
-ttcfg = train_cfg #[:100]
+ttinp = train_inp  # [:100]
+ttcfg = train_cfg  # [:100]
 
 # We define four functions to decide which item is the positive/negative for an anchor
 
@@ -136,6 +136,7 @@ def icc_cmp_fn(inp, cfg1, cfg2):
     else:
         return ("icc", inp, cfg2, cfg1)
 
+
 # %%
 
 ## This does not scale for the full dataset
@@ -145,7 +146,7 @@ def icc_cmp_fn(inp, cfg1, cfg2):
 #         yield delayed(iii_cmp_fn)(*inps)
 
 #     for cfgs in itertools.combinations(ttcfg, 3):
-#         yield delayed(ccc_cmp_fn)(*cfgs) 
+#         yield delayed(ccc_cmp_fn)(*cfgs)
 
 #     for cfg in ttcfg:
 #         for inp1, inp2 in itertools.combinations(ttinp, 2):
@@ -160,6 +161,7 @@ def icc_cmp_fn(inp, cfg1, cfg2):
 # pickle.dump((ttinp, ttcfg, pairs), open("data.p", "wb"))
 
 # Dataset creation ends
+
 
 # %%
 class TripletDataset(torch.utils.data.IterableDataset):
@@ -178,14 +180,25 @@ class TripletDataset(torch.utils.data.IterableDataset):
 
     def __iter__(self):
         while True:
-            sampled_input_indices = np.random.choice(self.input_indices, self.n, replace=False)
-            sampled_config_indices = np.random.choice(self.config_indices, self.n, replace=False)
+            sampled_input_indices = np.random.choice(
+                self.input_indices, self.n, replace=False
+            )
+            sampled_config_indices = np.random.choice(
+                self.config_indices, self.n, replace=False
+            )
             pairs = self.make_pairs(sampled_input_indices, sampled_config_indices)
             for t, a, p, n in pairs:
-                anchor = self.input_features[a] if t[0] == 'i' else self.config_features[a]
-                positive = self.input_features[p] if t[1] == 'i' else self.config_features[p]
-                negative = self.input_features[n] if t[2] == 'i' else self.config_features[n]
+                anchor = (
+                    self.input_features[a] if t[0] == "i" else self.config_features[a]
+                )
+                positive = (
+                    self.input_features[p] if t[1] == "i" else self.config_features[p]
+                )
+                negative = (
+                    self.input_features[n] if t[2] == "i" else self.config_features[n]
+                )
                 yield anchor, positive, negative
+
 
 # %%
 
@@ -230,30 +243,66 @@ optimizer = torch.optim.AdamW(
     list(input_emb.parameters()) + list(config_emb.parameters()), lr=0.0001
 )
 
+
+def make_batch(size):
+    batch_idx = []
+    for i in range(size):
+        task = np.random.choice(4)
+        if task == 0:  # iii
+            params = np.random.choice(ttinp, size=3, replace=False)
+            triplet = iii_cmp_fn(*params)
+        elif task == 1:  # ccc
+            params = np.random.choice(ttcfg, size=3, replace=False)
+            triplet = ccc_cmp_fn(*params)
+        elif task == 2:  # icc
+            inp = np.random.choice(ttinp)
+            cfgs = np.random.choice(ttcfg, size=2, replace=False)
+            triplet = icc_cmp_fn(inp, *cfgs)
+        else:  # cii
+            cfg = np.random.choice(ttcfg)
+            inps = np.random.choice(ttinp, size=2, replace=False)
+            triplet = cii_cmp_fn(cfg, *inps)
+
+        t, a, p, n = triplet
+        batch_idx.append(
+            (
+                t[0] == "i",
+                input_map[a] if t[0] == "i" else config_map[a],
+                t[1] == "i",
+                input_map[p] if t[1] == "i" else config_map[p],
+                t[2] == "i",
+                input_map[n] if t[2] == "i" else config_map[n],
+            )
+        )
+
+    return torch.tensor(batch_idx)
+
+
 def make_batch_v2(size):
+    """This samples a set of `size` inputs + configs and constructs all possible triplets from them."""
     half_size = size // 2
     sampled_ttinp = np.random.choice(ttinp, size=half_size, replace=False)
     sampled_ttcfg = np.random.choice(ttcfg, size=half_size, replace=False)
     batch_idx = []
-    
+
     # iii task
     for inp1, inp2, inp3 in itertools.combinations(sampled_ttinp, 3):
         batch_idx.append(iii_cmp_fn(inp1, inp2, inp3))
-    
+
     # ccc task
     for cfg1, cfg2, cfg3 in itertools.combinations(sampled_ttcfg, 3):
         batch_idx.append(ccc_cmp_fn(cfg1, cfg2, cfg3))
-    
+
     # icc task
     for inp in sampled_ttinp:
         for cfg1, cfg2 in itertools.combinations(sampled_ttcfg, 2):
             batch_idx.append(icc_cmp_fn(inp, cfg1, cfg2))
-    
+
     # cii task
     for cfg in sampled_ttcfg:
         for inp1, inp2 in itertools.combinations(sampled_ttinp, 2):
             batch_idx.append(cii_cmp_fn(cfg, inp1, inp2))
-    
+
     # Convert to indices and tensor
     batch_idx = [
         (
@@ -268,17 +317,27 @@ def make_batch_v2(size):
     ]
     return torch.tensor(batch_idx)
 
+# TODO For our dataset size it is relatively cheap to calculate the embeddings for all inputs and configs.
+# We can every few iterations update a full collection and collect the hardest triplets from it.
+# 
+with torch.no_grad():
+    emb_lookup = torch.empty((train_input_arr.shape[0]+train_config_arr.shape[0], emb_size))
+    emb_lookup[:train_input_arr.shape[0]] = input_emb(train_input_arr)
+    emb_lookup[train_input_arr.shape[0]:] = config_emb(train_config_arr)
 
 for iteration in range(1_000):
-    batch = make_batch(batch_size)
+    batch = make_batch(batch_size).reshape((-1, 2))
     input_row = batch[:, 0] == 1
+    assert batch.shape[1] == 2, "Make sure to reshape batch to two columns (type, index)"
 
     optimizer.zero_grad()
     embeddings = torch.empty((batch.shape[0], emb_size))
     embeddings[input_row] = input_emb(train_input_arr[batch[input_row, 1]])
     embeddings[~input_row] = config_emb(train_config_arr[batch[~input_row, 1]])
     loss = nn.functional.triplet_margin_loss(
-        anchor=embeddings[:, 0::3], positive=embeddings[:, 1::3], negative=embeddings[:, 2::3]
+        anchor=embeddings[0::3],
+        positive=embeddings[1::3],
+        negative=embeddings[2::3],
     )
     loss.backward()
     optimizer.step()
