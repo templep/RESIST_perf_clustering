@@ -161,18 +161,29 @@ pickle.dump((ttinp, ttcfg, pairs), open("data.p", "wb"))
 
 # %%
 class TripletDataset(torch.utils.data.IterableDataset):
-    def __init__(self, input_features, config_features, pairs):
+    def __init__(self, input_features, config_features, n):
         super(TripletDataset, self).__init__()
         self.input_features = input_features
         self.config_features = config_features
-        self.pairs = pairs
+        self.n = n
+        self.input_indices = np.arange(len(input_features))
+        self.config_indices = np.arange(len(config_features))
+
+    def make_pairs(self, input_indices, config_indices):
+        # This method should be implemented to generate pairs
+        # based on the sampled input and config indices.
+        pass
 
     def __iter__(self):
-        for t, a, p, n in self.pairs:
-            anchor = self.input_features[a] if t[0] == 'i' else self.config_features[a]
-            positive = self.input_features[p] if t[1] == 'i' else self.config_features[p]
-            negative = self.input_features[n] if t[2] == 'i' else self.config_features[n]
-            yield anchor, positive, negative
+        while True:
+            sampled_input_indices = np.random.choice(self.input_indices, self.n, replace=False)
+            sampled_config_indices = np.random.choice(self.config_indices, self.n, replace=False)
+            pairs = self.make_pairs(sampled_input_indices, sampled_config_indices)
+            for t, a, p, n in pairs:
+                anchor = self.input_features[a] if t[0] == 'i' else self.config_features[a]
+                positive = self.input_features[p] if t[1] == 'i' else self.config_features[p]
+                negative = self.input_features[n] if t[2] == 'i' else self.config_features[n]
+                yield anchor, positive, negative
 
 # %%
 
