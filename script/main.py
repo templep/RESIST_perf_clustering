@@ -185,7 +185,7 @@ def main(args):
 
     ###################################################################
     ###################################################################
-    ##tentative de comprehension pour automatisation de l'exploitation
+    ## try to understand how it works (the dendrogram + the hierarchical clustering); see how we can create a comparison score
     # cluster.retrieve_idx_per_cluster(cls)
 
     # print( str(len(cls.distances_)) + "   " + str(len(cls.children_)))
