@@ -138,24 +138,26 @@ def icc_cmp_fn(inp, cfg1, cfg2):
 
 # %%
 
-def task_generator():
-    for inps in itertools.combinations(ttinp, 3):
-        yield delayed(iii_cmp_fn)(*inps)
+## This does not scale for the full dataset
 
-    for cfgs in itertools.combinations(ttcfg, 3):
-        yield delayed(ccc_cmp_fn)(*cfgs) 
+# def task_generator():
+#     for inps in itertools.combinations(ttinp, 3):
+#         yield delayed(iii_cmp_fn)(*inps)
 
-    for cfg in ttcfg:
-        for inp1, inp2 in itertools.combinations(ttinp, 2):
-            yield delayed(cii_cmp_fn)(cfg, inp1, inp2)
+#     for cfgs in itertools.combinations(ttcfg, 3):
+#         yield delayed(ccc_cmp_fn)(*cfgs) 
 
-    for inp in ttinp:
-        for cfg1, cfg2 in itertools.combinations(ttcfg, 2):
-            yield delayed(icc_cmp_fn)(inp, cfg1, cfg2)
+#     for cfg in ttcfg:
+#         for inp1, inp2 in itertools.combinations(ttinp, 2):
+#             yield delayed(cii_cmp_fn)(cfg, inp1, inp2)
 
-pairs = Parallel(n_jobs=-1, verbose=10)(task_generator())
+#     for inp in ttinp:
+#         for cfg1, cfg2 in itertools.combinations(ttcfg, 2):
+#             yield delayed(icc_cmp_fn)(inp, cfg1, cfg2)
 
-pickle.dump((ttinp, ttcfg, pairs), open("data.p", "wb"))
+# pairs = Parallel(n_jobs=-1, verbose=10)(task_generator())
+
+# pickle.dump((ttinp, ttcfg, pairs), open("data.p", "wb"))
 
 # Dataset creation ends
 
@@ -195,20 +197,20 @@ train_config_arr = torch.from_numpy(config_features.loc[train_cfg].values).float
 input_map = {s: i for i, s in enumerate(train_inp)}
 config_map = {s: i for i, s in enumerate(train_cfg)}
 
-pairs_idx = []
-for t, a, p, n in pairs:
-    pairs_idx.append(
-        (
-            t[0] == "i",
-            input_map[a] if t[0] == "i" else config_map[a],
-            t[1] == "i",
-            input_map[p] if t[1] == "i" else config_map[p],
-            t[2] == "i",
-            input_map[n] if t[2] == "i" else config_map[n],
-        )
-    )
+# pairs_idx = []
+# for t, a, p, n in pairs:
+#     pairs_idx.append(
+#         (
+#             t[0] == "i",
+#             input_map[a] if t[0] == "i" else config_map[a],
+#             t[1] == "i",
+#             input_map[p] if t[1] == "i" else config_map[p],
+#             t[2] == "i",
+#             input_map[n] if t[2] == "i" else config_map[n],
+#         )
+#     )
 
-pairs_idx = np.array(pairs_idx)
+# pairs_idx = np.array(pairs_idx)
 
 # %%
 # def main():
@@ -225,23 +227,53 @@ config_emb = nn.Sequential(
 )
 
 optimizer = torch.optim.AdamW(
-    list(input_emb.parameters()) + list(config_emb.parameters()), lr=0.0003
+    list(input_emb.parameters()) + list(config_emb.parameters()), lr=0.0001
 )
 
-dataset = torch.utils.data.TensorDataset(torch.from_numpy(pairs_idx))
-loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size)
+def make_batch(size):
+    batch_idx = []
+    for i in range(size):
+        task = np.random.choice(4)
+        if task == 0:  # iii
+            params = np.random.choice(ttinp, size=3, replace=False)
+            triplet = iii_cmp_fn(*params)
+        elif task == 1:  # ccc
+            params = np.random.choice(ttcfg, size=3, replace=False)
+            triplet = ccc_cmp_fn(*params)
+        elif task == 2:  # icc
+            inp = np.random.choice(ttinp)
+            cfgs = np.random.choice(ttcfg, size=2, replace=False)
+            triplet = icc_cmp_fn(inp, *cfgs)
+        else:  # cii
+            cfg = np.random.choice(ttcfg)
+            inps = np.random.choice(ttinp, size=2, replace=False)
+            triplet = cii_cmp_fn(cfg, *inps)
+        
+        t, a, p, n = triplet
+        batch_idx.append(
+            (
+                t[0] == "i",
+                input_map[a] if t[0] == "i" else config_map[a],
+                t[1] == "i",
+                input_map[p] if t[1] == "i" else config_map[p],
+                t[2] == "i",
+                input_map[n] if t[2] == "i" else config_map[n],
+            )
+        )
 
-for batch_idx in loader:
-    # batch_idx = np.random.randint(len(pairs_idx), size=batch_size)
-    batch = pairs_idx[batch_idx].reshape(-1, 2)
-    input_row = batch[:, 0] == 0
+    return torch.tensor(batch_idx)
+
+
+for iteration in range(1_000):
+    batch = make_batch(batch_size)
+    input_row = batch[:, 0] == 1
 
     optimizer.zero_grad()
     embeddings = torch.empty((batch.shape[0], emb_size))
     embeddings[input_row] = input_emb(train_input_arr[batch[input_row, 1]])
     embeddings[~input_row] = config_emb(train_config_arr[batch[~input_row, 1]])
     loss = nn.functional.triplet_margin_loss(
-        anchor=embeddings[0::3], positive=embeddings[1::3], negative=embeddings[2::3]
+        anchor=embeddings[:, 0::3], positive=embeddings[:, 1::3], negative=embeddings[:, 2::3]
     )
     loss.backward()
     optimizer.step()
