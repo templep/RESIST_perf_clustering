@@ -63,8 +63,8 @@ rank_map = input_config_map.groupby("inputname").transform(
 average_ranks = rank_map.mean(axis=1)
 
 # %%
-ttinp = train_inp[:100]
-ttcfg = train_cfg[:100]
+ttinp = train_inp #[:100]
+ttcfg = train_cfg #[:100]
 
 # We define four functions to decide which item is the positive/negative for an anchor
 
@@ -138,23 +138,43 @@ def icc_cmp_fn(inp, cfg1, cfg2):
 
 # %%
 
-tasks = []
-tasks.extend(delayed(iii_cmp_fn)(*inps) for inps in itertools.combinations(ttinp, 3))
-tasks.extend(delayed(ccc_cmp_fn)(*cfgs) for cfgs in itertools.combinations(ttcfg, 3))
+def task_generator():
+    for inps in itertools.combinations(ttinp, 3):
+        yield delayed(iii_cmp_fn)(*inps)
 
-for cfg in ttcfg:
-    tasks.extend(delayed(cii_cmp_fn)(cfg, inp1, inp2) for inp1, inp2 in itertools.combinations(ttinp, 2))
+    for cfgs in itertools.combinations(ttcfg, 3):
+        yield delayed(ccc_cmp_fn)(*cfgs) 
 
-for inp in ttinp:
-    tasks.extend(delayed(icc_cmp_fn)(inp, cfg1, cfg2) for cfg1, cfg2 in itertools.combinations(ttcfg, 2))
+    for cfg in ttcfg:
+        for inp1, inp2 in itertools.combinations(ttinp, 2):
+            yield delayed(cii_cmp_fn)(cfg, inp1, inp2)
 
-print(f"Start {len(tasks)} tasks")
+    for inp in ttinp:
+        for cfg1, cfg2 in itertools.combinations(ttcfg, 2):
+            yield delayed(icc_cmp_fn)(inp, cfg1, cfg2)
 
-pairs = Parallel(n_jobs=-1, verbose=10)(tasks)
+pairs = Parallel(n_jobs=-1, verbose=10)(task_generator())
 
 pickle.dump((ttinp, ttcfg, pairs), open("data.p", "wb"))
 
 # Dataset creation ends
+
+# %%
+class TripletDataset(torch.utils.data.Dataset):
+    # TODO Switch to iterable dataset?
+    def __init__(self, input_features, config_features):
+        self.num_inputs = input_features.shape[0]
+        self.num_configs = config_features.shape[0]
+
+        self.input_features = input_features
+        self.config_features = config_features
+
+    def __len__(self):
+        # TODO Calculate max. length
+        return 12345
+    
+    def __getitem__(self, idx):
+        return None, None
 
 # %%
 
