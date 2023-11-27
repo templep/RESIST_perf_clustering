@@ -1,0 +1,5 @@
+numpy
+pandas<2.0
+scikit-learn
+matplotlib
+ipykernel
