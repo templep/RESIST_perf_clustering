@@ -9,14 +9,14 @@ from common import load_data, split_data
 
 ## Configuration
 # Enter names of performance columns to consider
-performances = ["elapsedtime"]
+performances = ["kbs"]
 
 # Number of nearest neighbours to consider
 topk_values = (1, 3, 5, 10)
 
 
 ## Load and prepare data
-perf_matrix, input_features, config_features = load_data(data_dir="data/")
+perf_matrix, input_features, config_features = load_data(data_dir="../data/")
 data_split = split_data(perf_matrix)
 
 # This is a look up for performance measurements from inputname + configurationID
@@ -47,6 +47,8 @@ average_ranks = rank_map.mean(axis=1)
 
 
 def configurations_from_neighbour_ranks(neighbor_indices, topk=5):
+    # We aggregate the configuration ranks over all neighbors
+    # If we have multiple measures, we take their mean rank
     avg_rank_per_measure = (
         rank_map.loc[all_input_names.iloc[neighbor_indices]]
         .groupby("configurationID")
@@ -57,6 +59,7 @@ def configurations_from_neighbour_ranks(neighbor_indices, topk=5):
 
 
 def evaluate_neighbour_ranks(input_batch, model_feat, topk):
+    # For each input we find the k closest neighbors
     knn_indices = model_feat.kneighbors(input_batch, return_distance=False)
 
     recommended_configuration_ranks = np.apply_along_axis(
@@ -86,6 +89,8 @@ def evaluate_neighbour_ranks(input_batch, model_feat, topk):
 
 ## Actual Execution
 
+# For each input, we look 
+
 for topk in topk_values:
     model_feat = NearestNeighbors(n_neighbors=topk)
     model_feat.fit(input_features.loc[data_split["train_inp"]])
@@ -98,3 +103,5 @@ for topk in topk_values:
         f"Avg. rank of {topk} best recommended configuration: {best_ranks.mean():.2f}"
     )
     print(f"Avg. MAPE of {topk} best recommended configuration: {best_mape.mean():.2f}")
+
+# %%
