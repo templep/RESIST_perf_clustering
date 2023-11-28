@@ -162,44 +162,6 @@ def icc_cmp_fn(inp, cfg1, cfg2):
 
 # Dataset creation ends
 
-
-# %%
-class TripletDataset(torch.utils.data.IterableDataset):
-    def __init__(self, input_features, config_features, n):
-        super(TripletDataset, self).__init__()
-        self.input_features = input_features
-        self.config_features = config_features
-        self.n = n
-        self.input_indices = np.arange(len(input_features))
-        self.config_indices = np.arange(len(config_features))
-
-    def make_pairs(self, input_indices, config_indices):
-        # This method should be implemented to generate pairs
-        # based on the sampled input and config indices.
-        pass
-
-    def __iter__(self):
-        while True:
-            sampled_input_indices = np.random.choice(
-                self.input_indices, self.n, replace=False
-            )
-            sampled_config_indices = np.random.choice(
-                self.config_indices, self.n, replace=False
-            )
-            pairs = self.make_pairs(sampled_input_indices, sampled_config_indices)
-            for t, a, p, n in pairs:
-                anchor = (
-                    self.input_features[a] if t[0] == "i" else self.config_features[a]
-                )
-                positive = (
-                    self.input_features[p] if t[1] == "i" else self.config_features[p]
-                )
-                negative = (
-                    self.input_features[n] if t[2] == "i" else self.config_features[n]
-                )
-                yield anchor, positive, negative
-
-
 # %%
 
 # Here the actual training setup starts
@@ -325,7 +287,7 @@ with torch.no_grad():
     emb_lookup[:train_input_arr.shape[0]] = input_emb(train_input_arr)
     emb_lookup[train_input_arr.shape[0]:] = config_emb(train_config_arr)
 
-for iteration in range(1_000):
+for iteration in range(100):
     batch = make_batch(batch_size).reshape((-1, 2))
     input_row = batch[:, 0] == 1
     assert batch.shape[1] == 2, "Make sure to reshape batch to two columns (type, index)"
@@ -346,6 +308,22 @@ for iteration in range(1_000):
 # %%
 
 # TODO Validation function
+import torch.nn.functional as F
+
+rank_arr = rank_map.loc[(ttinp, ttcfg), :].reset_index().pivot_table(index="inputname", columns="configurationID", values="elapsedtime").values
+
+# rank_map -> IxCxP matrix
+def top_k_closest_euclidean(emb1, emb2, k):
+    distance = torch.cdist(emb1, emb2, p=2)
+    return torch.topk(distance, k, largest=False, dim=1)[1]
+
+def top_k_closest_cosine(emb1, emb2, k):
+    emb1_norm = F.normalize(emb1, p=2, dim=1)
+    emb2_norm = F.normalize(emb2, p=2, dim=1)
+
+    # Calculate cosine similarity (dot product of unit vectors)
+    similarity = torch.mm(emb1_norm, emb2_norm.t())
+    return torch.topk(similarity, k, largest=True, dim=1)[1]
 
 # %%
 def evaluate(input, configurations, rank_map):
