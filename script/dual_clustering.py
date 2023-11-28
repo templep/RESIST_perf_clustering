@@ -14,6 +14,8 @@ from common import (
     spearman_rank_distance,
     pearson_correlation,
     rank_difference_distance,
+    wilcoxon_distance,
+    kendalltau_distance,
 )
 
 # The plan for this file is to have two clusterings:
@@ -89,42 +91,23 @@ len(all_input_names), len(all_config_ids), measurements.shape
 
 ### Rank-based distance matrix
 
-
 # Distance matrix may not include negative values, but spearman can be negative
 # distance_matrix = spearman_rank_distance(measurements)
 
 # Input x Input distance matrix
-distance_matrix_inputs = rank_difference_distance(measurements)
+# distance_matrix_inputs = rank_difference_distance(measurements)
 distance_matrix_configs = rank_difference_distance(np.swapaxes(measurements, 0, 1))
 
 model_dist = NearestNeighbors(metric="precomputed")
-model_dist.fit(distance_matrix_inputs[:, :, 0])
-
-
+model_dist.fit(distance_matrix_configs[:, :, 0])
 
 # %%
 ## Evaluation
 
 
 # %%
-def distance_matrix_by_first_axis(array):
-    reshaped_array = array.reshape(array.shape[0], -1)
-    pairdist = cdist(reshaped_array, reshaped_array)
-    return pairdist
 
-
-def get_configuration_distances(measurements):
-    return distance_matrix_by_first_axis(measurements)
-
-
-def get_input_distances(measurements):
-    return distance_matrix_by_first_axis(np.moveaxis(measurements, 0, 1))
-
-# %%
-reshaped_array = measurements.reshape(measurements.shape[0], -1)
-model = AgglomerativeClustering(n_clusters=10, compute_distances=True, linkage='average')
-model.fit(reshaped_array)
-
+## Dendrograms of different distance functions
 def plot_dendrogram(model, **kwargs):
     # Create linkage matrix and then plot the dendrogram
 
@@ -147,47 +130,52 @@ def plot_dendrogram(model, **kwargs):
     # Plot the corresponding dendrogram
     dendrogram(linkage_matrix, **kwargs)
 
-plot_dendrogram(model, truncate_mode="level", p=20, color_threshold=0.01)
 # %%
-# reshaped_array = measurements.reshape(measurements.shape[0], -1)
-model = AgglomerativeClustering(n_clusters=10, compute_distances=True, linkage='average', metric="precomputed")
+# Distance between measurements
+reshaped_array = measurements.reshape(measurements.shape[0], -1)
+model = AgglomerativeClustering(
+    n_clusters=10, compute_distances=True, linkage="average"
+)
+model.fit(reshaped_array)
+plot_dendrogram(model, truncate_mode="level", p=20, color_threshold=0.01)
+
+# %%
+# Rank-difference distance
+distance_matrix_inputs = rank_difference_distance(measurements)
+model = AgglomerativeClustering(
+    distance_threshold=0.0,
+    n_clusters=None,
+    compute_distances=True,
+    linkage="average",
+    metric="precomputed",
+)
 model.fit(distance_matrix_inputs[:, :, 0])
-
-
 plot_dendrogram(model, truncate_mode="level", p=20, color_threshold=0.01)
+
 # %%
+# Wilcoxon distance
+dist_mat = wilcoxon_distance(measurements)
+model = AgglomerativeClustering(
+    distance_threshold=0.0,
+    n_clusters=None,
+    compute_distances=True,
+    linkage="average",
+    metric="precomputed",
+)
+model.fit(dist_mat[:, :, 0])
+plot_dendrogram(model, truncate_mode="level", p=20, color_threshold=0.01)
 
-# TODO Implement wilcoxon or kendalltau as the distance between the two rankings
+# %%
+# Kendalltau distance
+dist_mat = kendalltau_distance(measurements)
+model = AgglomerativeClustering(
+    distance_threshold=0,
+    n_clusters=None,
+    compute_distances=True,
+    linkage="average",
+    metric="precomputed",
+)
+model.fit(dist_mat[:, :, 0])
+plot_dendrogram(model, truncate_mode="level", p=20, color_threshold=0.01)
 
-def wilcoxon_distance(measurements):
-    # Vectorized wilcoxon with multiple measurements
-
-    # Breaks ties correctly by assigning same ranks, but potentially instable
-    # TODO Should work correctly if we drop `frames` which has constant value
-    # ranks = stats.rankdata(measurements, axis=1, method="min")
-
-    # Makes individual ranks
-    ranks = np.argsort(measurements, axis=1)
-
-    # The ranks array is 3D (A, B, C), and we need to expand it to 4D for pairwise comparison in A,
-    # while keeping C
-    expanded_rank_X_3d = ranks[:, np.newaxis, :, :]  # Expanding for A dimension
-    expanded_rank_Y_3d = ranks[np.newaxis, :, :, :]  # Expanding for A dimension
-
-    A = ranks.shape[0]
-    C = ranks.shape[2]
-
-    # Initialize the Spearman correlation matrix for each C
-    spearman_correlation_matrix_3d = np.empty((A, A, C))
-
-    # Calculate Spearman correlation matrix for each C
-    for c in range(C):
-        print(expanded_rank_X_3d[:, :, :, c].shape, expanded_rank_Y_3d[:, :, :, c].shape)
-        spearman_correlation_matrix_3d[:, :, c] = stats.kendalltau(
-            expanded_rank_X_3d[:, :, :, c], expanded_rank_Y_3d[:, :, :, c]
-        ).statistic
-
-    return spearman_correlation_matrix_3d
-
-dmi = wilcoxon_distance(measurements)
 # %%
