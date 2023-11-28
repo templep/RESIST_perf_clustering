@@ -348,3 +348,17 @@ for iteration in range(1_000):
 # TODO Validation function
 
 # %%
+def evaluate(input, configurations, rank_map):
+    # Calculate the distance between the input and each configuration
+    distances = [distance(input, config) for config in configurations]
+
+    # Rank the distances
+    distance_ranking = sorted(range(len(distances)), key=lambda k: distances[k])
+
+    # Get the ranking from rank_map for the input
+    rank_map_ranking = rank_map[input]
+
+    # Compare the two rankings
+    comparison = [i==j for i, j in zip(distance_ranking, rank_map_ranking)]
+
+    return comparison
