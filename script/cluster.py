@@ -5,7 +5,6 @@ from sklearn.cluster import AgglomerativeClustering
 from scipy.cluster.hierarchy import dendrogram
 from matplotlib import pyplot as plt
 
-from scipy.cluster.hierarchy import linkage
 
 ###return a dataframe containing only the last columns of an input dataframe
 ###the dataframe given in input is supposed to be built as first a description of the configuration as a vector (several columns of a single line)
@@ -26,16 +25,20 @@ def extract_feature(data,nb_meas=8):
 ###the input is composed of a dataframe containing different measures that will serve for clustering, the number of different configurations and the column(s) to keep
 ###it returns a new dataframe that contains a single line for each configuration, for each of them, the number of column is equal to the number of test cases and it reports the performance measure observed
 ###the returned dataframe is supposed to be homogeneous and contains only a number of lines equal to nb_config; the number of columns is only about the observed performance measure of a specific performance (such as execution time, size after compilation, etc.)
-def create_feature_points(data,nb_config,meas_to_keep):
+### is_on_config is a parameter to allow to perform clustering one way or the other (considering clustering by configurations or by input)
+def create_feature_points(data, nb_config, meas_to_keep, is_on_config=True):
 	nb_rows = data.shape[0]
-	nb_col = data.shape[1]
+	#nb_col = data.shape[1]
 	#print(int(nb_rows/nb_config))
 	
 	data_extract = data.iloc[:,meas_to_keep]
 	
 	new_nb_r = nb_config
 	new_nb_c = int(len(meas_to_keep)*(nb_rows/nb_config))
-	points = data_extract.to_numpy().reshape(new_nb_r,new_nb_c)
+	if is_on_config:
+		points = data_extract.to_numpy().reshape(new_nb_r,new_nb_c)
+	else:
+		points = data_extract.to_numpy().reshape(new_nb_c,new_nb_r)
 	#print("shape dataset with only measures of interest")
 	#print(points.shape)
 	feature_points = pd.DataFrame(points)
@@ -64,7 +67,7 @@ def plot_dendrogram(model, **kwargs):
                                       counts]).astype(float)
 
     # Plot the corresponding dendrogram
-    d=dendrogram(linkage_matrix, **kwargs)
+    dendrogram(linkage_matrix, **kwargs)
     
     #### test to see the cluster associated with every leaf
     # print(d['color_list'])
@@ -75,21 +78,29 @@ def plot_dendrogram(model, **kwargs):
 ###a function to perform agglomerative hierarchical clustering using scikit-learn defined functions
 ###it is configured to be displayable with the call to plot_dendogram
 ###data is the dataframe on which to apply the clustering algorithm
-def cluster_to_display(data, n_clust=None, link='average', aff='cosine', connect=None, cmpt_dist=False,threshold_dist=0):
+def cluster_to_display(data, n_clust=None, link='average', metric='cosine', connect=None, cmpt_dist=False,threshold_dist=0):
 
-	model = AgglomerativeClustering(linkage=link, affinity=aff, connectivity=connect, n_clusters=n_clust, compute_distances=cmpt_dist, distance_threshold=threshold_dist)
+	model = AgglomerativeClustering(linkage=link, metric=metric, connectivity=connect, n_clusters=n_clust, compute_distances=cmpt_dist, distance_threshold=threshold_dist)
 	m_to_plot=model.fit(data)
+	print("HEEEEEEEEEEEEELLLLLLLLLLLLLLLLLLLLLLLOOOOOOOOOOOOOOOOOOOOOO")
 	print(m_to_plot.n_clusters_)
 	print(m_to_plot.labels_)
+	print(m_to_plot.compute_distances)
+	#print(m_to_plot.distances_)
+	d = pd.DataFrame(m_to_plot.distances_)
+	print("taille de la matrice distances_"+str(m_to_plot.distances_.shape))
+	d.to_csv("../results/TEST_DISTANCES_on_input.csv")
+	d = pd.DataFrame(m_to_plot.children_)
+	d.to_csv("../results/TEST_CHILDREN_on_input.csv")
 	
     #### plotting the dendrogam so that the colors reflect on the clusters' assignations is hard
     #### the only way I found to do it is to plot the labels on the leaves and deduce where should be the color_threshold
     #### NOW only the line with the fixed threshold is executing
 	plt.title('Hierarchical Clustering Dendrogram')
     # to adapt the color_threshold value, please uncomment this line and comment the next one then visually find the right value and change the color threshold
-	#plot_dendrogram(m_to_plot, truncate_mode='level', p=20, labels=m_to_plot.labels_)
+	plot_dendrogram(m_to_plot, truncate_mode=None, p=200, labels=m_to_plot.labels_)
     #to adapt the color threshold, simply change the value and comment the previous line which defines the labels
-	plot_dendrogram(m_to_plot, truncate_mode='level', p=20, color_threshold=0.01)
+	#plot_dendrogram(m_to_plot, truncate_mode='level', p=20, color_threshold=0.01)
 	plt.xlabel("Number of points in node (or index of point if no parenthesis).")
 	plt.show()
 	

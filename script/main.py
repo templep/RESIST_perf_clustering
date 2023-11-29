@@ -117,7 +117,7 @@ def save_config_clusters(output_dir, cfg_meas, idx1, idx2):
 
 ### save two indexes that are merged in a dendrogram with the computed distance between the two.
 def save_pairs_and_distance(
-    output_dir, path, ext, children, distances, linkage="average", affinity="cosine"
+    output_dir, path, ext, children, distances, linkage="average", metric="cosine", is_on_config=True
 ):
     # create a dataframe with all needed informations that were given in parameteres
     pd_data = pd.DataFrame(data=(children[:, 0], children[:, 1], distances))
@@ -131,8 +131,10 @@ def save_pairs_and_distance(
         + "distances_and_pairs_link_"
         + str(linkage)
         + "_aff_"
-        + str(affinity)
-        + "_level20_distance0.csv"
+        + str(metric)
+        + "_level20_distance0_"
+        + "on_config" if is_on_config else "on_input"
+        +".csv"
     )
     pd_data_save.to_csv(csvfile)
 
@@ -140,6 +142,9 @@ def save_pairs_and_distance(
 def main(args):
     # store indexes of interest (retrieving performance values) to perform clustering and analyzes
     index_interest = args.idx_interest
+    
+    # will the clustering be done on the software configurations? If False, done on the input properties
+    cluster_cfg = args.is_on_config
 
     # load all data in a single dataframe
     path = args.folder
@@ -158,16 +163,16 @@ def main(args):
     # print(measures.shape)
 
     # create a dimension space in which each dimension corresponds to a measure observed from a test case
-    feature_pts = cluster.create_feature_points(measures, nb_data, index_interest)
+    feature_pts = cluster.create_feature_points(measures, nb_data, index_interest, cluster_cfg)
     # print(feature_pts)
     # apply clustering and display dendrogram
     link = args.link
-    aff = args.affinity
+    metric = args.metric
     cls = cluster.cluster_to_display(
         feature_pts,
         n_clust=None,
         link=link,
-        aff=aff,
+        metric=metric,
         connect=None,
         cmpt_dist=True,
         threshold_dist=0,
@@ -176,11 +181,11 @@ def main(args):
     ## save all pairs of configurations that form the dendrogram with the distances of their performance but in different files
     output_dir = os.path.join(
         args.output_folder,
-        "comparison_pair_" + link + "_sim_" + aff + "_link_10_clusters/",
+        "comparison_pair_" + link + "_sim_" + metric + "_link_10_clusters/",
     )
     makedirs(output_dir, exist_ok=True)
     save_pairs_and_distance(
-        output_dir, path, ext, cls.children_, cls.distances_, linkage=link, affinity=aff
+        output_dir, path, ext, cls.children_, cls.distances_, linkage=link, metric=metric, is_on_config=cluster_cfg
     )
 
     ###################################################################
@@ -245,7 +250,7 @@ if __name__ == "__main__":
         type=str,
     )
     parser.add_argument(
-        "--affinity",
+        "--metric",
         help="Defines the metric to use when calculating distance between instances in a feature array.  See https://scikit-learn.org/stable/modules/generated/sklearn.cluster.AgglomerativeClustering.html for possible values",
         default="cosine",
         type=str,
@@ -256,5 +261,11 @@ if __name__ == "__main__":
         default="../results/diff_config/",
         type=str,
     )
+    parser.add_argument(
+        "--is_on_config",
+        help="if set to True, clustering will be done on software configurations; if set to False, it will be done on input properties",
+        action='store_true',
+    )
     args = parser.parse_args()
+    
     main(args)
