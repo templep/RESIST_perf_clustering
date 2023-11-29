@@ -149,7 +149,7 @@ config_map = {s: i for i, s in enumerate(train_cfg)}
 
 # %%
 
-
+# TODO Make vectorized version that splits evenly between the tasks
 def make_batch(size):
     batch_idx = []
     for _ in range(size):
@@ -230,8 +230,13 @@ def make_batch_v2(size):
 
 
 # rank_map -> IxCxP matrix
-def top_k_closest_euclidean(emb1, emb2, k):
-    distance = torch.cdist(emb1, emb2, p=2)
+def top_k_closest_euclidean(emb1, emb2=None, k=5):
+    if emb2 is None:
+        distance = torch.cdist(emb1, emb1, p=2)
+        distance.fill_diagonal_(distance.max() + 1)
+    else:
+        distance = torch.cdist(emb1, emb2, p=2)
+
     return torch.topk(distance, k, largest=False, dim=1)[1]
 
 
@@ -249,7 +254,7 @@ def evaluate_icc(input_embeddings, config_embeddings, rank_arr, mape_arr, k):
     # For each input, we query the k closest configurations
     # We determine their rank against the measured data and the MAPE
     # We return the best and the mean value
-    top_cfg = top_k_closest_euclidean(input_embeddings, config_embeddings, k)
+    top_cfg = top_k_closest_euclidean(input_embeddings, config_embeddings, k=k)
 
     # Ranks
     cfg_ranks = torch.gather(rank_arr, 1, top_cfg).float()
@@ -264,18 +269,18 @@ def evaluate_icc(input_embeddings, config_embeddings, rank_arr, mape_arr, k):
     return best_rank, avg_rank, best_mape, avg_mape
 
 # TODO Maybe this is wrong, results do not change during training
-def evaluate_iii(input_embeddings, rank_arr, mape_arr, k):
+def evaluate_iii(input_embeddings, rank_arr, mape_arr, n_neighbors, k_recs):
     # The closest input will always be the input itself,
     # therefore we ask for k+1 and drop the first column
-    top_inp = top_k_closest_euclidean(input_embeddings, input_embeddings, k + 1)[:, 1:]
+    top_inp = top_k_closest_euclidean(input_embeddings, k=n_neighbors)
 
     # Ranks
-    avg_cfg_ranks = rank_arr[top_inp].float().mean(axis=1)
+    avg_cfg_ranks = torch.topk(rank_arr[top_inp].float().mean(axis=1), k=k_recs, dim=1, largest=False).indices.float()
     best_rank = avg_cfg_ranks.min(axis=1)[0].mean()
     avg_rank = avg_cfg_ranks.mean(axis=1).mean()
 
     # MAPE
-    avg_cfg_mape = mape_arr[top_inp].mean(axis=1)
+    avg_cfg_mape = torch.topk(mape_arr[top_inp].float().mean(axis=1), k=k_recs, dim=1, largest=False).indices.float()
     best_mape = avg_cfg_mape.min(axis=1)[0].mean()
     avg_mape = avg_cfg_mape.mean(axis=1).mean()
 
@@ -287,14 +292,16 @@ def evaluate_iii(input_embeddings, rank_arr, mape_arr, k):
 num_input_features = train_input_arr.shape[1]
 num_config_features = train_config_arr.shape[1]
 emb_size = 24
-batch_size = 256
+batch_size = 2048
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 input_emb = nn.Sequential(
     nn.Linear(num_input_features, 64), nn.ReLU(), nn.Linear(64, emb_size)
-)
+).to(device)
 config_emb = nn.Sequential(
     nn.Linear(num_config_features, 64), nn.ReLU(), nn.Linear(64, emb_size)
-)
+).to(device)
 
 optimizer = torch.optim.AdamW(
     list(input_emb.parameters()) + list(config_emb.parameters()), lr=0.0003
@@ -303,12 +310,12 @@ optimizer = torch.optim.AdamW(
 # TODO For our dataset size it is relatively cheap to calculate the embeddings for all inputs and configs.
 # We can every few iterations update a full collection and collect the hardest triplets from it.
 #
-with torch.no_grad():
-    emb_lookup = torch.empty(
-        (train_input_arr.shape[0] + train_config_arr.shape[0], emb_size)
-    )
-    emb_lookup[: train_input_arr.shape[0]] = input_emb(train_input_arr)
-    emb_lookup[train_input_arr.shape[0] :] = config_emb(train_config_arr)
+# with torch.no_grad():
+#     emb_lookup = torch.empty(
+#         (train_input_arr.shape[0] + train_config_arr.shape[0], emb_size)
+#     )
+#     emb_lookup[: train_input_arr.shape[0]] = input_emb(train_input_arr)
+#     emb_lookup[train_input_arr.shape[0] :] = config_emb(train_config_arr)
 
 # For evaluation
 rank_arr = torch.from_numpy(
@@ -316,25 +323,28 @@ rank_arr = torch.from_numpy(
     .reset_index()
     .pivot_table(index="inputname", columns="configurationID", values="elapsedtime")
     .values
-)
+).to(device)
 mape_arr = torch.from_numpy(
     error_mape.loc[(ttinp, ttcfg), :]
     .reset_index()
     .pivot_table(index="inputname", columns="configurationID", values="elapsedtime")
     .values
-)
+).to(device)
+
+train_input_arr = train_input_arr.to(device)
+train_config_arr = train_config_arr.to(device)
 
 total_loss = 0
 
-for iteration in range(1_000):
-    batch = make_batch(batch_size).reshape((-1, 2))
+for iteration in range(100):
+    batch = make_batch(batch_size).reshape((-1, 2)).to(device)
     input_row = batch[:, 0] == 1
     assert (
         batch.shape[1] == 2
     ), "Make sure to reshape batch to two columns (type, index)"
 
     optimizer.zero_grad()
-    embeddings = torch.empty((batch.shape[0], emb_size))
+    embeddings = torch.empty((batch.shape[0], emb_size), device=device)
     embeddings[input_row] = input_emb(train_input_arr[batch[input_row, 1]])
     embeddings[~input_row] = config_emb(train_config_arr[batch[~input_row, 1]])
     loss = nn.functional.triplet_margin_loss(
@@ -344,7 +354,7 @@ for iteration in range(1_000):
     )
     loss.backward()
     optimizer.step()
-    total_loss += loss.item()
+    total_loss += loss.cpu().item()
 
     if iteration % 10 == 0:
         with torch.no_grad():
@@ -360,7 +370,8 @@ for iteration in range(1_000):
                 inputembs,
                 rank_arr,
                 mape_arr,
-                k=5,
+                n_neighbors=5,
+                k_recs=5,
             )
             print(
                 f"l:{total_loss/10:.3f} | "
