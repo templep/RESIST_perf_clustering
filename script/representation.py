@@ -149,6 +149,7 @@ config_map = {s: i for i, s in enumerate(train_cfg)}
 
 # %%
 
+
 # TODO Make vectorized version that splits evenly between the tasks
 def make_batch(size):
     batch_idx = []
@@ -228,6 +229,15 @@ def make_batch_v2(size):
 
 ## Validation functions
 
+# These functions work on both the embedding space and the original feature space.
+# Requirements: 
+# - The input/config representation must be floating point torch tensor.
+# - `rank_arr` and `mape_arr` must be (I, C) tensors mapping the input idx x config idx to the performance measure
+
+# TODO Make functions for rank_arr and mape_arr or let them work on the dataframes directly
+# TODO Allow multiple performance measures
+# TODO Move evaluation functions to separate file once they are stable
+
 
 # rank_map -> IxCxP matrix
 def top_k_closest_euclidean(emb1, emb2=None, k=5):
@@ -237,7 +247,7 @@ def top_k_closest_euclidean(emb1, emb2=None, k=5):
     else:
         distance = torch.cdist(emb1, emb2, p=2)
 
-    return torch.topk(distance, k, largest=False, dim=1)[1]
+    return torch.topk(distance, k, largest=False, dim=1).indices
 
 
 def top_k_closest_cosine(emb1, emb2, k):
@@ -246,45 +256,136 @@ def top_k_closest_cosine(emb1, emb2, k):
 
     # Calculate cosine similarity (dot product of unit vectors)
     similarity = torch.mm(emb1_norm, emb2_norm.t())
-    return torch.topk(similarity, k, largest=True, dim=1)[1]
+    return torch.topk(similarity, k, largest=True, dim=1).indices
 
 
 # TODO Mapping from embeddings to correct inputs/configs
-def evaluate_icc(input_embeddings, config_embeddings, rank_arr, mape_arr, k):
+def evaluate_icc(input_representation, config_representation, rank_arr, mape_arr, k):
     # For each input, we query the k closest configurations
     # We determine their rank against the measured data and the MAPE
     # We return the best and the mean value
-    top_cfg = top_k_closest_euclidean(input_embeddings, config_embeddings, k=k)
+    top_cfg = top_k_closest_euclidean(input_representation, config_representation, k=k)
 
     # Ranks
     cfg_ranks = torch.gather(rank_arr, 1, top_cfg).float()
     best_rank = cfg_ranks.min(axis=1)[0].mean()
     avg_rank = cfg_ranks.mean(axis=1).mean()
 
-    #  MAPE
+    # MAPE
     cfg_mape = torch.gather(mape_arr, 1, top_cfg).float()
     best_mape = cfg_mape.min(axis=1)[0].mean()
     avg_mape = cfg_mape.mean(axis=1).mean()
 
     return best_rank, avg_rank, best_mape, avg_mape
 
-# TODO Maybe this is wrong, results do not change during training
-def evaluate_iii(input_embeddings, rank_arr, mape_arr, n_neighbors, k_recs):
-    # The closest input will always be the input itself,
-    # therefore we ask for k+1 and drop the first column
-    top_inp = top_k_closest_euclidean(input_embeddings, k=n_neighbors)
+# TODO Check this works
+def evaluate_cii(input_representation, config_representation, rank_arr, mape_arr, k):
+    # For each configuration, we query the k closest inputs
+    # We determine their rank against the measured data and the MAPE
+    # We return the best and the mean value
+    top_inp = top_k_closest_euclidean(config_representation, input_representation, k=k)
 
     # Ranks
-    avg_cfg_ranks = torch.topk(rank_arr[top_inp].float().mean(axis=1), k=k_recs, dim=1, largest=False).indices.float()
-    best_rank = avg_cfg_ranks.min(axis=1)[0].mean()
-    avg_rank = avg_cfg_ranks.mean(axis=1).mean()
+    inp_ranks = torch.gather(rank_arr.t, 1, top_inp).float()
+    best_rank = inp_ranks.min(axis=1)[0].mean()
+    avg_rank = inp_ranks.mean(axis=1).mean()
 
     # MAPE
-    avg_cfg_mape = torch.topk(mape_arr[top_inp].float().mean(axis=1), k=k_recs, dim=1, largest=False).indices.float()
-    best_mape = avg_cfg_mape.min(axis=1)[0].mean()
-    avg_mape = avg_cfg_mape.mean(axis=1).mean()
+    inp_mape = torch.gather(mape_arr.t, 1, top_inp).float()
+    best_mape = inp_mape.min(axis=1)[0].mean()
+    avg_mape = inp_mape.mean(axis=1).mean()
 
     return best_rank, avg_rank, best_mape, avg_mape
+
+
+# TODO Maybe this is wrong, results do not change during training
+def evaluate_iii(
+    input_representation, rank_arr, mape_arr, n_neighbors, n_recs=[1, 3, 5]
+):
+    """
+    Evaluation of the input representations.
+    
+    For each input, we look-up the `n_neighbors` closest inputs in the representation space.
+    We evaluate their rank by:
+    - The average rank/mape they have for their top `n_recs` configurations
+    """
+    top_inp = top_k_closest_euclidean(input_representation, k=n_neighbors)
+
+    ranks = []
+    mapes = []
+
+    rank_aggregation = rank_arr[top_inp].float().mean(axis=1)
+    mape_aggregation = mape_arr[top_inp].float().mean(axis=1)
+
+    for r in n_recs:
+        # Ranks
+        avg_cfg_ranks = torch.topk(
+            rank_aggregation, k=r, dim=1, largest=False
+        ).indices.float()
+        best_rank = avg_cfg_ranks.min(axis=1)[0].mean()
+        # avg_rank = avg_cfg_ranks.mean(axis=1).mean()
+
+        # MAPE
+        avg_cfg_mape = torch.topk(
+            mape_aggregation, k=r, dim=1, largest=False
+        ).values.float()
+        best_mape = avg_cfg_mape.min(axis=1)[0].mean()
+        # avg_mape = avg_cfg_mape.mean(axis=1).mean()
+
+        ranks.append(best_rank)
+        mapes.append(best_mape)
+
+    return ranks, mapes
+
+
+def evaluate_ccc(
+    config_representation, rank_arr, mape_arr, n_neighbors, n_recs=[1, 3, 5]
+):
+    """
+    Evaluation of the configuration representations.
+
+    For each configuration, we look-up the `n_neighbors` closest configurations in the representation space.
+    We evaluate their rank/mape by:
+    - Their top `n_recs` inputs; calculated from the average over all inputs.
+
+    n_recs is a parameter for the stability of the configuration..
+    """
+    # TODO Aggregate, then rank vs Rank, then aggregate/vote?
+    # Now, we first aggregate the config ranks over all inputs, then we take the top r inputs
+    # Alternatively, we can take the top r inputs and calculate the size of the union (|S|=r => 1, |S|=r*k => 0)
+    # The alternative is more a consistency metric than a performance metric
+    # Probably we need both. The first for the MAPE, the rank is somehow interesting too, and the consistency for stability
+
+    # (C, n_neighbors)
+    top_cfg = top_k_closest_euclidean(config_representation, k=n_neighbors)
+
+    ranks = []
+    mapes = []
+
+    # TODO I'm not sure this indexing is actually correct
+    # 
+    rank_aggregation = rank_arr[:, top_cfg].float().mean(axis=0)
+    mape_aggregation = mape_arr[:, top_cfg].float().mean(axis=0)
+
+    for r in n_recs:
+        # Ranks
+        avg_cfg_ranks = torch.topk(
+            rank_aggregation, k=r, dim=0, largest=False
+        ).indices.float()
+        best_rank = avg_cfg_ranks.min(axis=1)[0].mean()
+        # avg_rank = avg_cfg_ranks.mean(axis=1).mean()
+
+        # MAPE
+        avg_cfg_mape = torch.topk(
+            mape_aggregation, k=r, dim=1, largest=False
+        ).values.float()
+        best_mape = avg_cfg_mape.min(axis=1)[0].mean()
+        # avg_mape = avg_cfg_mape.mean(axis=1).mean()
+
+        ranks.append(best_rank)
+        mapes.append(best_mape)
+
+    return ranks, mapes
 
 
 # %%
@@ -292,7 +393,7 @@ def evaluate_iii(input_embeddings, rank_arr, mape_arr, n_neighbors, k_recs):
 num_input_features = train_input_arr.shape[1]
 num_config_features = train_config_arr.shape[1]
 emb_size = 24
-batch_size = 2048
+batch_size = 256
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -371,7 +472,7 @@ for iteration in range(100):
                 rank_arr,
                 mape_arr,
                 n_neighbors=5,
-                k_recs=5,
+                n_recs=5,
             )
             print(
                 f"l:{total_loss/10:.3f} | "
