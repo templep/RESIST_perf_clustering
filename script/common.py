@@ -12,72 +12,85 @@ def format_time(s):
     return dtf.minute * 60 + dtf.second + dtf.microsecond / 1_000_000
 
 
-input_columns = [
-    "category",
-    "resolution",
-    "WIDTH",
-    "HEIGHT",
-    "SPATIAL_COMPLEXITY",
-    "TEMPORAL_COMPLEXITY",
-    "CHUNK_COMPLEXITY_VARIATION",
-    "COLOR_COMPLEXITY",
-]
-input_columns_cat = ["category"]
-input_columns_cont = [s for s in input_columns if s not in input_columns_cat]
+def load_x264(data_dir="../data/"):
+    input_columns = [
+        "category",
+        "resolution",
+        "WIDTH",
+        "HEIGHT",
+        "SPATIAL_COMPLEXITY",
+        "TEMPORAL_COMPLEXITY",
+        "CHUNK_COMPLEXITY_VARIATION",
+        "COLOR_COMPLEXITY",
+    ]
+    input_columns_cat = ["category"]
+    input_columns_cont = [s for s in input_columns if s not in input_columns_cat]
 
-config_columns = [
-    "cabac",
-    "ref",
-    "deblock",
-    "analyse",
-    "me",
-    "subme",
-    "mixed_ref",
-    "me_range",
-    "trellis",
-    "8x8dct",
-    "fast_pskip",
-    "chroma_qp_offset",
-    "bframes",
-    "b_pyramid",
-    "b_adapt",
-    "direct",
-    "weightb",
-    "open_gop",
-    "weightp",
-    "scenecut",
-    "rc_lookahead",
-    "mbtree",
-    "qpmax",
-    "aq-mode",
-]
-config_columns_cat = [
-    "analyse",
-    "me",
-    "direct",
-    "deblock",
-    "b_adapt",
-    "b_pyramid",
-    "open_gop",
-    "rc_lookahead",
-    "scenecut",
-    "weightb",
-]
-config_columns_cont = [s for s in config_columns if s not in config_columns_cat]
+    config_columns = [
+        "cabac",
+        "ref",
+        "deblock",
+        "analyse",
+        "me",
+        "subme",
+        "mixed_ref",
+        "me_range",
+        "trellis",
+        "8x8dct",
+        "fast_pskip",
+        "chroma_qp_offset",
+        "bframes",
+        "b_pyramid",
+        "b_adapt",
+        "direct",
+        "weightb",
+        "open_gop",
+        "weightp",
+        "scenecut",
+        "rc_lookahead",
+        "mbtree",
+        "qpmax",
+        "aq-mode",
+    ]
+    config_columns_cat = [
+        "analyse",
+        "me",
+        "direct",
+        "deblock",
+        "b_adapt",
+        "b_pyramid",
+        "open_gop",
+        "rc_lookahead",
+        "scenecut",
+        "weightb",
+    ]
+    config_columns_cont = [s for s in config_columns if s not in config_columns_cat]
 
-all_performances = [
-    "rel_size",  # after preprocessing, before just `size` - min
-    "usertime",
-    "systemtime",
-    "elapsedtime",
-    "cpu",
-    # "frames",  # irrelevant?
-    "fps",  # max
-    "kbs",
-]
+    all_performances = [
+        # "rel_size",  # after preprocessing, before just `size` - min
+        "usertime",
+        "systemtime",
+        "elapsedtime",
+        "cpu",
+        # "frames",  # irrelevant?
+        "fps",  # max
+        "kbs",
+        "rel_kbs",
+    ]
+    # True - higher is better
+    # increasing_performances = {
+    #     "rel_size": False,
+    #     "usertime": False,
+    #     "systemtime": False,
+    #     "elapsedtime": False,
+    #     "cpu": False,
+    #     "fps": True,
+    #     "kbs": False,
+    #     "rel_kbs": False,
+    # }
 
+    # metadata = {}
 
-def load_data(data_dir="../data/"):
     meas_matrix, _ = load_all_csv(
         os.path.join(data_dir, "res_ugc"), ext="csv", with_names=True
     )
@@ -91,9 +104,10 @@ def load_data(data_dir="../data/"):
         meas_matrix, input_properties, left_on="inputname", right_on="name"
     ).sort_values(by=["inputname", "configurationID"])
     del perf_matrix["name"]
-    perf_matrix["rel_size"] = perf_matrix["size"] / perf_matrix["ORIG_SIZE"]
+    # perf_matrix["rel_size"] = perf_matrix["size"] / perf_matrix["ORIG_SIZE"]  # We have `kbs` which is a better alternative
     # perf_matrix["rel_size"] = np.log(perf_matrix["rel_size"])  # To scale value distribution more evenly
-    # TODO rel_kbs too?
+    perf_matrix["rel_kbs"] = perf_matrix["kbs"] / perf_matrix["ORIG_BITRATE"]
+    perf_matrix["fps"] = -perf_matrix["fps"]  # fps is the only increasing performance measure
 
     input_features = (
         perf_matrix[["inputname"] + input_columns_cont]
@@ -109,7 +123,7 @@ def load_data(data_dir="../data/"):
         .drop_duplicates()
     )
 
-    return perf_matrix, input_features, config_features
+    return perf_matrix, input_features, config_features, all_performances
 
 
 def split_data(perf_matrix, test_size=0.15, verbose=True):
