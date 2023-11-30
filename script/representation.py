@@ -8,10 +8,9 @@ import itertools
 from scipy import stats
 from common import (
     split_data,
-    load_data,
+    load_x264,
 )
 import pickle
-from joblib import Parallel, delayed
 
 # Purpose of this file
 # We learn a simple embedding of the input and configuration vectors
@@ -31,10 +30,14 @@ from joblib import Parallel, delayed
 # Let's first iterate on the pre-generation
 
 # %%
-performances = ["elapsedtime"]
-
 ## Load and prepare data
-perf_matrix, input_features, config_features = load_data(data_dir="../data/")
+perf_matrix, input_features, config_features, performances = load_x264(data_dir="../data/")
+
+print(f"Loaded data x264")
+print(f"perf_matrix:{perf_matrix.shape}")
+print(f"input_features:{input_features.shape}")
+print(f"config_features:{config_features.shape}")
+
 data_split = split_data(perf_matrix)
 train_inp = data_split["train_inp"]
 train_cfg = data_split["train_cfg"]
@@ -63,74 +66,65 @@ rank_map = input_config_map.groupby("inputname").transform(
 average_ranks = rank_map.mean(axis=1)
 
 # %%
-ttinp = train_inp  # [:100]
-ttcfg = train_cfg  # [:100]
 
-# We define four functions to decide which item is the positive/negative for an anchor
+# TODO Load precalculated correlations, if they exist
+input_correlations = None
+config_correlations = None
 
-# inpcorrs = {}
-# for inp1, inp2 in itertools.combinations(sorted(ttinp), 2):
-#     inpcorrs[tuple(sorted((inp1, inp2)))] = rank_map.loc[inp1].corrwith(
-#         rank_map.loc[inp2]
-#     )
+# %%
 
-# cfgcorrs = {}
-# for cfg1, cfg2 in itertools.combinations(sorted(ttcfg), 2):
-#     cfgcorrs[tuple(sorted((cfg1, cfg2)))] = rank_map.xs(cfg1, level=1).corrwith(
-#         rank_map.xs(cfg2, level=1)
-#     )
+# We define four functions to rank two items compared to an anchor item
 
-# def iii_cmp_fn_cache(inp1, inp2, inp3):
-#     # Returns which of inp2 and inp3 is closer to inp1 in terms of rank correlation (pearson)
-#     i1i2 = inpcorrs[tuple(sorted((inp1, inp2)))]
-#     i1i3 = inpcorrs[tuple(sorted((inp1, inp3)))]
-#     if np.argmin((i1i2, i1i3)) == 0:
-#         pairs.append(("iii", inp1, inp2, inp3))
-#     else:
-#         pairs.append(("iii", inp1, inp3, inp2))
+def iii_cmp_fn(inp1, inp2, inp3, rank_map=None, lookup=None):
+    """Returns which of inp2 and inp3 is closer to inp1 in terms of rank correlation (pearson)."""
+    if lookup is not None:
+        i1i2 = lookup[tuple(sorted((inp1, inp2)))]
+        i1i3 = lookup[tuple(sorted((inp1, inp3)))]
+    elif rank_map is not None:
+        
+        i1i2 = rank_map.loc[inp1].corrwith(rank_map.loc[inp2])
+        i1i3 = rank_map.loc[inp1].corrwith(rank_map.loc[inp3])
+    else:
+        raise Exception("Either `rank_map` or `lookup` must be provided.")
 
-
-# def ccc_cmp_fn_cache(cfg1, cfg2, cfg3):
-#     c1c2 = cfgcorrs[tuple(sorted((cfg1, cfg2)))]
-#     c1c3 = cfgcorrs[tuple(sorted((cfg1, cfg3)))]
-
-#     if np.argmin((c1c2, c1c3)) == 0:
-#         pairs.append(("ccc", cfg1, cfg2, cfg3))
-#     else:
-#         pairs.append(("ccc", cfg1, cfg3, cfg2))
-
-
-def iii_cmp_fn(inp1, inp2, inp3):
-    # Returns which of inp2 and inp3 is closer to inp1 in terms of rank correlation (pearson)
-    i1i2 = rank_map.loc[inp1].corrwith(rank_map.loc[inp2])
-    i1i3 = rank_map.loc[inp1].corrwith(rank_map.loc[inp3])
+    
     if (i1i2 < i1i3).item():
         return ("iii", inp1, inp2, inp3)
     else:
         return ("iii", inp1, inp3, inp2)
 
 
-def ccc_cmp_fn(cfg1, cfg2, cfg3):
-    c1c2 = rank_map.xs(cfg1, level=1).corrwith(rank_map.xs(cfg2, level=1))
-    c1c3 = rank_map.xs(cfg1, level=1).corrwith(rank_map.xs(cfg3, level=1))
+def ccc_cmp_fn(cfg1, cfg2, cfg3, rank_map=None, lookup=None):
+    """Returns which of cfg2 and cfg3 is closer to cfg1 in terms of rank correlation (pearson)."""
+    if lookup is not None:
+        c1c2 = lookup[tuple(sorted((cfg1, cfg2)))]
+        c1c3 = lookup[tuple(sorted((cfg1, cfg3)))]
+    elif rank_map is not None:
+        c1c2 = rank_map.xs(cfg1, level=1).corrwith(rank_map.xs(cfg2, level=1))
+        c1c3 = rank_map.xs(cfg1, level=1).corrwith(rank_map.xs(cfg3, level=1))
+    else:
+        raise Exception("Either `rank_map` or `lookup` must be provided.")
+    
     if (c1c2 < c1c3).item():
         return ("ccc", cfg1, cfg2, cfg3)
     else:
         return ("ccc", cfg1, cfg3, cfg2)
 
 
-def cii_cmp_fn(cfg, inp1, inp2):
+def cii_cmp_fn(cfg, inp1, inp2, rank_map):
     ci1 = rank_map.loc[(inp1, cfg)]
     ci2 = rank_map.loc[(inp2, cfg)]
+    
     if (ci1 < ci2).item():
         return ("cii", cfg, inp1, inp2)
     else:
         return ("cii", cfg, inp2, inp1)
 
 
-def icc_cmp_fn(inp, cfg1, cfg2):
+def icc_cmp_fn(inp, cfg1, cfg2, rank_map):
     ic1 = rank_map.loc[(inp, cfg1)]
     ic2 = rank_map.loc[(inp, cfg2)]
+
     if (ic1 < ic2).item():
         return ("icc", inp, cfg1, cfg2)
     else:
@@ -151,23 +145,23 @@ config_map = {s: i for i, s in enumerate(train_cfg)}
 
 
 # TODO Make vectorized version that splits evenly between the tasks
-def make_batch(size):
+def make_batch(inputs, configs, size):
     batch_idx = []
     for _ in range(size):
         task = np.random.choice(4)
         if task == 0:  # iii
-            params = np.random.choice(ttinp, size=3, replace=False)
+            params = np.random.choice(inputs, size=3, replace=False)
             triplet = iii_cmp_fn(*params)
         elif task == 1:  # ccc
-            params = np.random.choice(ttcfg, size=3, replace=False)
+            params = np.random.choice(configs, size=3, replace=False)
             triplet = ccc_cmp_fn(*params)
         elif task == 2:  # icc
-            inp = np.random.choice(ttinp)
-            cfgs = np.random.choice(ttcfg, size=2, replace=False)
+            inp = np.random.choice(inputs)
+            cfgs = np.random.choice(configs, size=2, replace=False)
             triplet = icc_cmp_fn(inp, *cfgs)
         else:  # cii
-            cfg = np.random.choice(ttcfg)
-            inps = np.random.choice(ttinp, size=2, replace=False)
+            cfg = np.random.choice(configs)
+            inps = np.random.choice(inputs, size=2, replace=False)
             triplet = cii_cmp_fn(cfg, *inps)
 
         t, a, p, n = triplet
@@ -185,11 +179,11 @@ def make_batch(size):
     return torch.tensor(batch_idx)
 
 
-def make_batch_v2(size):
+def make_batch_v2(inputs, configs, size):
     """This samples a set of `size` inputs + configs and constructs all possible triplets from them."""
     half_size = size // 2
-    sampled_ttinp = np.random.choice(ttinp, size=half_size, replace=False)
-    sampled_ttcfg = np.random.choice(ttcfg, size=half_size, replace=False)
+    sampled_ttinp = np.random.choice(inputs, size=half_size, replace=False)
+    sampled_ttcfg = np.random.choice(configs, size=half_size, replace=False)
     batch_idx = []
 
     # iii task
@@ -223,6 +217,44 @@ def make_batch_v2(size):
         for t, a, p, n in batch_idx
     ]
     return torch.tensor(batch_idx)
+
+
+def make_batch_v3(inputs, configs, size, rank_map=None, lookup=None):
+    mask = torch.tensor([
+        [1, 1, 1],
+        [0, 0, 0],
+        [1, 0, 0],
+        [0, 1, 1]
+    ], dtype=bool)
+    batch_mask = mask[np.random.choice(mask.shape[0], size=10, replace=True)]
+    n_inputs = batch_mask.sum()
+    n_configs = (~batch_mask).sum()
+
+    # selected_inputs = np.random.choice(len(inputs), size=(n_inputs,), replace=False)
+    # seleced_configs = np.random.choice(len(configs), size=(n_configs,), replace=False)
+
+    batch_idx = torch.empty((size, 6), dtype=int)
+    batch_idx[:, 0::2] = batch_mask
+    batch_idx[:, 1::2][batch_mask] = torch.from_numpy()
+    batch_idx[:, 1::2][~batch_mask] = torch.from_numpy()
+
+    for i in range(size):
+        a, p, n = batch_idx[i, 1::2]
+
+        if (batch_idx[i, 0::2] == mask[0]).all():
+            row = iii_cmp_fn(inputs[a], inputs[p], inputs[n], rank_map=rank_map, lookup=lookup)[1:]
+        elif (batch_idx[i, 0::2] == mask[1]).all():
+            row = ccc_cmp_fn(configs[a], configs[p], configs[n], rank_map=rank_map, lookup=lookup)[1:]
+        elif (batch_idx[i, 0::2] == mask[2]).all():
+            row = icc_cmp_fn(inputs[a], configs[p], configs[n], rank_map=rank_map)[1:]
+        elif (batch_idx[i, 0::2] == mask[3]).all():
+            row = cii_cmp_fn(configs[a], inputs[p], inputs[n], rank_map=rank_map)[1:]
+        else:
+            raise Exception("Something went wrong")
+        
+        batch_idx[:, 1::2] = row
+    
+    return batch_idx
 
 
 # %%
@@ -335,7 +367,7 @@ def evaluate_iii(
         ranks.append(best_rank)
         mapes.append(best_mape)
 
-    return ranks, mapes
+    return torch.tensor(ranks), torch.tensor(mapes)
 
 
 def evaluate_ccc(
@@ -385,7 +417,7 @@ def evaluate_ccc(
         ranks.append(best_rank)
         mapes.append(best_mape)
 
-    return ranks, mapes
+    return torch.tensor(ranks), torch.tensor(mapes)
 
 
 # %%
@@ -420,15 +452,15 @@ optimizer = torch.optim.AdamW(
 
 # For evaluation
 rank_arr = torch.from_numpy(
-    rank_map.loc[(ttinp, ttcfg), :]
+    rank_map.loc[(train_inp, train_cfg), :]
     .reset_index()
-    .pivot_table(index="inputname", columns="configurationID", values="elapsedtime")
+    .pivot_table(index="inputname", columns="configurationID", values=performances[0])
     .values
 ).to(device)
 mape_arr = torch.from_numpy(
-    error_mape.loc[(ttinp, ttcfg), :]
+    error_mape.loc[(train_inp, train_cfg), :]
     .reset_index()
-    .pivot_table(index="inputname", columns="configurationID", values="elapsedtime")
+    .pivot_table(index="inputname", columns="configurationID", values=performances[0])
     .values
 ).to(device)
 
@@ -438,7 +470,7 @@ train_config_arr = train_config_arr.to(device)
 total_loss = 0
 
 for iteration in range(100):
-    batch = make_batch(batch_size).reshape((-1, 2)).to(device)
+    batch = make_batch(train_inp, train_cfg, batch_size).reshape((-1, 2)).to(device)
     input_row = batch[:, 0] == 1
     assert (
         batch.shape[1] == 2
@@ -467,12 +499,12 @@ for iteration in range(100):
                 mape_arr,
                 k=5,
             )
-            iii_best_rank, iii_avg_rank, iii_best_mape, iii_avg_mape = evaluate_iii(
+            iii_ranks, iii_mape = evaluate_iii(
                 inputembs,
                 rank_arr,
                 mape_arr,
                 n_neighbors=5,
-                n_recs=5,
+                n_recs=[1,3,5],
             )
             print(
                 f"l:{total_loss/10:.3f} | "
@@ -480,10 +512,8 @@ for iteration in range(100):
                 + f"avg:{icc_avg_rank:.2f}) "
                 + f"mape(best:{icc_best_mape:.2f} "
                 + f"avg:{icc_avg_mape:.2f})) | "
-                + f"iii(rank(best:{iii_best_rank:.2f} "
-                + f"avg:{iii_avg_rank:.2f}) "
-                + f"mape(best:{iii_best_mape:.2f} "
-                + f"avg:{iii_avg_mape:.2f}))"
+                + f"iii(rank({iii_ranks.numpy().round(2)} "
+                + f"mape({iii_mape.numpy().round(2)}) "
             )
             total_loss = 0
 
