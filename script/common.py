@@ -1,5 +1,7 @@
 import pandas as pd
 from sklearn.model_selection import train_test_split
+import torch
+import torch.nn.functional as F
 from main import load_all_csv
 import numpy as np
 import os
@@ -107,7 +109,9 @@ def load_x264(data_dir="../data/"):
     # perf_matrix["rel_size"] = perf_matrix["size"] / perf_matrix["ORIG_SIZE"]  # We have `kbs` which is a better alternative
     # perf_matrix["rel_size"] = np.log(perf_matrix["rel_size"])  # To scale value distribution more evenly
     perf_matrix["rel_kbs"] = perf_matrix["kbs"] / perf_matrix["ORIG_BITRATE"]
-    perf_matrix["fps"] = -perf_matrix["fps"]  # fps is the only increasing performance measure
+    perf_matrix["fps"] = -perf_matrix[
+        "fps"
+    ]  # fps is the only increasing performance measure
 
     input_features = (
         perf_matrix[["inputname"] + input_columns_cont]
@@ -126,14 +130,18 @@ def load_x264(data_dir="../data/"):
     return perf_matrix, input_features, config_features, all_performances
 
 
-def split_data(perf_matrix, test_size=0.15, verbose=True):
+def split_data(perf_matrix, test_size=0.15, verbose=True, random_state=None):
     # We set aside 15% of configurations and 15% of inputs as test data
     # This gives us 4 sets of data, of which we set 3 aside for testing
     train_cfg, test_cfg = train_test_split(
-        perf_matrix["configurationID"].unique(), test_size=test_size
+        perf_matrix["configurationID"].unique(),
+        test_size=test_size,
+        random_state=random_state,
     )
     train_inp, test_inp = train_test_split(
-        perf_matrix["inputname"].unique(), test_size=test_size
+        perf_matrix["inputname"].unique(),
+        test_size=test_size,
+        random_state=random_state,
     )
     train_cfg.sort()
     test_cfg.sort()
@@ -268,3 +276,156 @@ def kendalltau_distance(measurements):
 
 def wilcoxon_distance(measurements):
     return stat_distance(measurements, stats_fn=stats.wilcoxon)
+
+
+def top_k_closest_euclidean(emb1, emb2=None, k=5):
+    if emb2 is None:
+        distance = torch.cdist(emb1, emb1, p=2)
+        distance.fill_diagonal_(distance.max() + 1)
+    else:
+        distance = torch.cdist(emb1, emb2, p=2)
+
+    return torch.topk(distance, k, largest=False, dim=1).indices
+
+
+def top_k_closest_cosine(emb1, emb2, k):
+    emb1_norm = F.normalize(emb1, p=2, dim=1)
+    emb2_norm = F.normalize(emb2, p=2, dim=1)
+
+    # Calculate cosine similarity (dot product of unit vectors)
+    similarity = torch.mm(emb1_norm, emb2_norm.t())
+    return torch.topk(similarity, k, largest=True, dim=1).indices
+
+
+## Evaluation functions
+
+# These functions work on both the embedding space and the original feature space.
+# Requirements:
+# - The input/config representation must be floating point torch tensor.
+# - `rank_arr` and `regret_arr` must be (I, C) tensors mapping the input idx x config idx to the performance measure
+
+# TODO Make functions for rank_arr and regret_arr or let them work on the dataframes directly
+# TODO Allow multiple performance measures
+# TODO Move evaluation functions to separate file once they are stable
+
+# rank_map -> IxCxP matrix
+
+
+def evaluate_ic(
+    input_representation,
+    config_representation,
+    rank_arr,
+    regret_arr,
+    k,
+    distance="euclidean",
+):
+    """Evaluation of the input-configuration mapping.
+
+    For each input, we look-up the `k` closest configurations in the representation space.
+    Among them we evaluate the best and average performance in terms and rank and regret.
+    """
+    # TODO Mapping from embeddings to correct inputs/configs
+    # For each input, we query the k closest configurations
+    # We determine their rank against the measured data and the regret
+    # We return the best and the mean value
+    if distance == "euclidean":
+        top_cfg = top_k_closest_euclidean(
+            input_representation, config_representation, k=k
+        )
+    elif distance == "cosine":
+        top_cfg = top_k_closest_cosine(input_representation, config_representation, k=k)
+
+    # Ranks
+    cfg_ranks = torch.gather(rank_arr, 1, top_cfg).float()
+    best_rank = cfg_ranks.min(axis=1)[0].mean()
+    avg_rank = cfg_ranks.mean(axis=1).mean()
+
+    # Regret
+    cfg_regret = torch.gather(regret_arr, 1, top_cfg).float()
+    best_regret = cfg_regret.min(axis=1)[0].mean()
+    avg_regret = cfg_regret.mean(axis=1).mean()
+
+    return best_rank, avg_rank, best_regret, avg_regret
+
+
+def evaluate_ii(
+    input_representation, rank_arr, regret_arr, n_neighbors, n_recs=[1, 3, 5], input_mask=None
+):
+    """
+    Evaluation of the input representations.
+
+    For each input, we look-up the `n_neighbors` closest inputs in the representation space.
+    We evaluate their rank by:
+    - The average rank/regret they have for their top `n_recs` configurations
+    """
+    # TODO Maybe this is wrong, results do not change during training
+    top_inp = top_k_closest_euclidean(input_representation, k=n_neighbors)
+
+    if input_mask is not None:
+        top_inp = top_inp[input_mask]
+
+    ranks = []
+    regrets = []
+
+    rank_aggregation = rank_arr[top_inp].float().mean(axis=1)
+    regret_aggregation = regret_arr[top_inp].float().mean(axis=1)
+
+    for r in n_recs:
+        # Ranks
+        avg_cfg_ranks = torch.topk(
+            rank_aggregation, k=r, dim=1, largest=False
+        ).indices.float()
+        best_rank = avg_cfg_ranks.min(axis=1)[0].mean()
+        # avg_rank = avg_cfg_ranks.mean(axis=1).mean()
+
+        # regret
+        avg_cfg_regret = torch.topk(
+            regret_aggregation, k=r, dim=1, largest=False
+        ).values.float()
+        best_regret = avg_cfg_regret.min(axis=1)[0].mean()
+        # avg_regret = avg_cfg_regret.mean(axis=1).mean()
+
+        ranks.append(best_rank)
+        regrets.append(best_regret)
+
+    return torch.tensor(ranks), torch.tensor(regrets)
+
+
+def evaluate_cc(config_representation, rank_arr, n_neighbors, n_recs=[1, 3, 5], config_mask=None):
+    """
+    Evaluation of the configuration representations.
+
+    For each configuration, we look-up the `n_neighbors` closest configurations in the representation space.
+    We evaluate the stability of configurations by:
+    - The shared number of r affected inputs from 0 (no shared inputs) to 1 (all r inputs shared)
+
+    n_recs is a parameter for the stability of the configuration.
+    """
+    if n_neighbors == 1:
+        return torch.ones((len(n_recs)))
+
+    # (C, n_neighbors)
+    top_cfg = top_k_closest_euclidean(config_representation, k=n_neighbors)
+
+    if config_mask is not None:
+        top_cfg = top_cfg[config_mask]
+
+    rank_aggregation = rank_arr[:, top_cfg].permute([1, 0, 2])
+    assert rank_aggregation.shape == (
+        top_cfg.shape[0],
+        rank_arr.shape[0],
+        n_neighbors,
+    )
+
+    share_ratios = torch.empty((len(n_recs)))
+    n_cfg = top_cfg.shape[0]
+
+    for i, r in enumerate(n_recs):
+        # We must have at least r x num configs unique elements
+        count_offset = n_cfg * r
+
+        topinds = torch.topk(rank_aggregation, k=r, dim=1, largest=False).indices
+        uniq_vals = torch.tensor([torch.unique(row).numel() for row in topinds])
+        share_ratios[i] = 1 - (torch.sum(uniq_vals)-count_offset) / (topinds.numel()-count_offset)
+
+    return share_ratios
