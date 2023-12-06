@@ -1,5 +1,6 @@
 # %%
-from sklearn.neighbors import NearestNeighbors
+%reload_ext autoreload
+%autoreload 2
 import numpy as np
 import pandas as pd
 from scipy import stats

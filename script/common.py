@@ -363,12 +363,20 @@ def evaluate_ii(
 
     if input_mask is not None:
         top_inp = top_inp[input_mask]
-
+    print("sasdf")
     ranks = []
     regrets = []
 
-    rank_aggregation = rank_arr[top_inp].float().mean(axis=1)
-    regret_aggregation = regret_arr[top_inp].float().mean(axis=1)
+    # TODO I MUST SELECT THE CONFIGS PER NEIGHBOUR BASED ON THEIR RESULTS
+    # NOT ON THE RESULTS FOR THE QUERY INPUT
+
+    # Foreach close input
+    top_r_cfgs_per_neighbor = []
+    for r in top_inp:
+        top_r_cfgs_per_neighbor.append(torch.topk(regret_arr[r, :], k=3, dim=1, largest=False).indices)
+
+    rank_aggregation = rank_arr[top_inp].float() #.mean(axis=1)
+    regret_aggregation = regret_arr[top_inp].float() #.mean(axis=1)
 
     for r in n_recs:
         # Ranks
@@ -379,9 +387,15 @@ def evaluate_ii(
         # avg_rank = avg_cfg_ranks.mean(axis=1).mean()
 
         # regret
-        avg_cfg_regret = torch.topk(
+        # Top r configs per input
+        top_r_cfg_per_input = torch.topk(
             regret_aggregation, k=r, dim=1, largest=False
         ).values.float()
+        avg_cfg_regret = torch.topk(
+            regret_aggregation.mean(axis=1), k=r, dim=1, largest=False
+        ).values.float()
+        return regret_aggregation
+        print(avg_cfg_regret)
         best_regret = avg_cfg_regret.min(axis=1)[0].mean()
         # avg_regret = avg_cfg_regret.mean(axis=1).mean()
 
