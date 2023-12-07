@@ -411,10 +411,10 @@ def evaluate_ic(
 
 def top_k_closest_euclidean_with_masks(emb, query_mask, reference_mask, k):
     if query_mask is None:
-        query_mask = torch.ones(emb.shape[0], dtype=bool)
+        query_mask = torch.ones(emb.shape[0], dtype=bool, device=emb.device)
 
     if reference_mask is None:
-        reference_mask = torch.ones(emb.shape[0], dtype=bool)
+        reference_mask = torch.ones(emb.shape[0], dtype=bool, device=emb.device)
 
     queries = emb[query_mask]  # e.g. test inputs
     references = emb[reference_mask]  # e.g. the training data for which we have measurements
