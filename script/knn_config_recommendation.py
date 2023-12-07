@@ -1,6 +1,6 @@
 # %%
-%reload_ext autoreload
-%autoreload 2
+# %reload_ext autoreload
+# %autoreload 2
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -22,8 +22,9 @@ random_seed = 33154
 performances = ["rel_kbs"]
 
 # Number of nearest neighbours to consider
-topk_values = (1, 3, 5, 10, 20)
-topr_values = (1, 3, 5, 10, 20)
+# Make multiples to allow better budget comparison
+topk_values = (1, 3, 5, 15, 25)
+topr_values = (1, 3, 5, 15, 25)
 
 ## Load and prepare data
 ## Load and prepare data
@@ -69,16 +70,14 @@ average_ranks = rank_map.mean(axis=1)
 
 # %%
 
-# 
+#
 rank_arr = torch.from_numpy(
-    rank_map  #.loc[(train_inp, train_cfg), :]
-    .reset_index()
+    rank_map.reset_index()  # .loc[(train_inp, train_cfg), :]
     .pivot_table(index="inputname", columns="configurationID", values=performances[0])
     .values
 )
 regret_arr = torch.from_numpy(
-    regret_map #.loc[(train_inp, train_cfg), :]
-    .reset_index()
+    regret_map.reset_index()  # .loc[(train_inp, train_cfg), :]
     .pivot_table(index="inputname", columns="configurationID", values=performances[0])
     .values
 )
@@ -98,34 +97,33 @@ train_config_arr = config_arr[train_config_mask]
 
 # %%
 
-from common import top_k_closest_euclidean
-
-
-
-
 train_cc = []
 test_cc = []
-test_ii_ranks = []
+test_ii_rank = []
+test_ii_ratio = []
 test_ii_regret = []
 
 
 for topk in topk_values:
-    train_cc.append(evaluate_cc(
-        config_arr[train_config_mask],
-        rank_arr=rank_arr[:, train_config_mask],
-        n_neighbors=topk,
-        n_recs=topr_values,
-        # config_mask=train_config_mask
-    ).numpy())
+    train_cc.append(
+        evaluate_cc(
+            config_arr[train_config_mask],
+            rank_arr=rank_arr[:, train_config_mask],
+            n_neighbors=topk,
+            n_recs=topr_values,
+            # config_mask=train_config_mask
+        ).numpy()
+    )
 
-    test_cc.append(evaluate_cc(
-        config_arr,
-        rank_arr=rank_arr,
-        n_neighbors=topk,
-        n_recs=topr_values,
-        config_mask=test_config_mask
-    ).numpy())
-
+    test_cc.append(
+        evaluate_cc(
+            config_arr,
+            rank_arr=rank_arr,
+            n_neighbors=topk,
+            n_recs=topr_values,
+            config_mask=test_config_mask,
+        ).numpy()
+    )
 
     test_ii = evaluate_ii(
         input_arr,
@@ -133,10 +131,13 @@ for topk in topk_values:
         regret_arr=regret_arr,
         n_neighbors=topk,
         n_recs=topr_values,
-        input_mask=train_input_mask
+        input_mask=train_input_mask,
     )
-    test_ii_ranks.append(test_ii[0].numpy())
+    test_ii_rank.append(test_ii[0].numpy())
     test_ii_regret.append(test_ii[1].numpy())
+    test_ii_ratio.append(test_ii[2].numpy())
+
+
 # %%
 def prepare_df(results, topr_values, topk_values):
     df = pd.DataFrame(results, columns=topr_values)
@@ -145,12 +146,12 @@ def prepare_df(results, topr_values, topk_values):
     df.columns = pd.MultiIndex.from_product([["r"], df.columns])
     return df
 
-# TODO Verify ii_regret results
 # TODO Scale ii_ranks results
 # TODO Share results in README
 
-print(prepare_df(train_cc, topr_values, topk_values))
-print(prepare_df(test_cc, topr_values, topk_values))
-print(prepare_df(test_ii_ranks, topr_values, topk_values))
-print(prepare_df(test_ii_regret, topr_values, topk_values))
+print("train cc\n", prepare_df(train_cc, topr_values, topk_values), "\n")
+print("test cc\n", prepare_df(test_cc, topr_values, topk_values), "\n")
+print("ii rank\n", prepare_df(test_ii_rank, topr_values, topk_values), "\n")
+print("ii ratio\n", prepare_df(test_ii_ratio, topr_values, topk_values), "\n")
+print("ii regret\n", prepare_df(test_ii_regret, topr_values, topk_values), "\n")
 # %%
