@@ -29,9 +29,10 @@ import os
 # %%
 ## Load and prepare data
 data_dir = "../data"
-perf_matrix, input_features, config_features, performances = load_x264(
+perf_matrix, input_features, config_features, all_performances = load_x264(
     data_dir=data_dir
 )
+performances = ["rel_kbs"]
 
 print(f"Loaded data x264")
 print(f"perf_matrix:{perf_matrix.shape}")
@@ -44,7 +45,7 @@ train_cfg = data_split["train_cfg"]
 
 # This is a look up for performance measurements from inputname + configurationID
 input_config_map = (
-    perf_matrix[["inputname", "configurationID"] + performances[:1]]
+    perf_matrix[["inputname", "configurationID"] + performances]
     .sort_values(["inputname", "configurationID"])
     .set_index(["inputname", "configurationID"])
 )
@@ -265,16 +266,16 @@ def make_batch_v3(inputs, configs, size, rank_map=None, lookup=None):
 
 num_input_features = train_input_arr.shape[1]
 num_config_features = train_config_arr.shape[1]
-emb_size = 24
-batch_size = 512
+emb_size = 32
+batch_size = 768
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 input_emb = nn.Sequential(
-    nn.Linear(num_input_features, 64), nn.ReLU(), nn.Linear(64, emb_size)
+    nn.Linear(num_input_features, 64), nn.Dropout(), nn.ReLU(), nn.Linear(64, emb_size)
 ).to(device)
 config_emb = nn.Sequential(
-    nn.Linear(num_config_features, 64), nn.ReLU(), nn.Linear(64, emb_size)
+    nn.Linear(num_config_features, 64), nn.Dropout(), nn.ReLU(), nn.Linear(64, emb_size)
 ).to(device)
 perf_predict = nn.Sequential(
     nn.Linear(2 * emb_size, 64),
@@ -283,7 +284,7 @@ perf_predict = nn.Sequential(
 )
 
 optimizer = torch.optim.AdamW(
-    list(input_emb.parameters()) + list(config_emb.parameters()), lr=0.03
+    list(input_emb.parameters()) + list(config_emb.parameters()), lr=0.003
 )
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
 
@@ -324,7 +325,7 @@ patience = 400
 # LR schedule
 
 
-for iteration in range(5_000):
+for iteration in range(10_000):
     batch = (
         make_batch(train_inp, train_cfg, batch_size, rank_map=rank_map)
         .reshape((-1, 2))
@@ -334,6 +335,8 @@ for iteration in range(5_000):
     assert (
         batch.shape[1] == 2
     ), "Make sure to reshape batch to two columns (type, index)"
+
+    # TODO inputembs collapse quickly. How to avoid?
 
     optimizer.zero_grad()
     embeddings = torch.empty((batch.shape[0], emb_size), device=device)
@@ -361,12 +364,12 @@ for iteration in range(5_000):
                 regret_arr,
                 k=5,
             )
-            iii_ranks, iii_regret = evaluate_ii(
+            iii_ranks, iii_regret, _ = evaluate_ii(
                 inputembs,
                 rank_arr,
                 regret_arr,
                 n_neighbors=5,
-                n_recs=[1, 3, 5],
+                n_recs=[1, 3, 5, 15, 25],
             )
             print(
                 f"{iteration} "

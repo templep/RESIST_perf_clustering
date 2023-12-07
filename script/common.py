@@ -349,7 +349,12 @@ def evaluate_ic(
 
 
 def evaluate_ii(
-    input_representation, rank_arr, regret_arr, n_neighbors, n_recs=[1, 3, 5], input_mask=None
+    input_representation,
+    rank_arr,
+    regret_arr,
+    n_neighbors,
+    n_recs=[1, 3, 5],
+    input_mask=None,
 ):
     """
     Evaluation of the input representations.
@@ -358,54 +363,59 @@ def evaluate_ii(
     We evaluate their rank by:
     - The average rank/regret they have for their top `n_recs` configurations
     """
-    # TODO Maybe this is wrong, results do not change during training
     top_inp = top_k_closest_euclidean(input_representation, k=n_neighbors)
 
     if input_mask is not None:
         top_inp = top_inp[input_mask]
-    print("sasdf")
-    ranks = []
-    regrets = []
-
-    # TODO I MUST SELECT THE CONFIGS PER NEIGHBOUR BASED ON THEIR RESULTS
-    # NOT ON THE RESULTS FOR THE QUERY INPUT
 
     # Foreach close input
+    max_r = np.max(n_recs)
     top_r_cfgs_per_neighbor = []
+    top_r_regret_per_neighbor = []
     for r in top_inp:
-        top_r_cfgs_per_neighbor.append(torch.topk(regret_arr[r, :], k=3, dim=1, largest=False).indices)
+        top_r_cfgs_per_neighbor.append(
+            torch.topk(regret_arr[r, :], k=max_r, dim=1, largest=False).indices
+        )
+        top_r_regret_per_neighbor.append(
+            torch.topk(regret_arr[r, :], k=max_r, dim=1, largest=False).values
+        )
 
-    rank_aggregation = rank_arr[top_inp].float() #.mean(axis=1)
-    regret_aggregation = regret_arr[top_inp].float() #.mean(axis=1)
+    top_r_cfgs_per_neighbor = torch.stack(top_r_cfgs_per_neighbor)
+    top_r_regret_per_neighbor = torch.stack(top_r_regret_per_neighbor)
 
-    for r in n_recs:
-        # Ranks
-        avg_cfg_ranks = torch.topk(
-            rank_aggregation, k=r, dim=1, largest=False
-        ).indices.float()
-        best_rank = avg_cfg_ranks.min(axis=1)[0].mean()
-        # avg_rank = avg_cfg_ranks.mean(axis=1).mean()
+    share_ratios = torch.empty(len(n_recs))
+    best_regret = torch.empty(len(n_recs))
+    best_rank = torch.empty(len(n_recs))
+    n_cfg = top_inp.shape[0]
 
-        # regret
-        # Top r configs per input
-        top_r_cfg_per_input = torch.topk(
-            regret_aggregation, k=r, dim=1, largest=False
-        ).values.float()
-        avg_cfg_regret = torch.topk(
-            regret_aggregation.mean(axis=1), k=r, dim=1, largest=False
-        ).values.float()
-        return regret_aggregation
-        print(avg_cfg_regret)
-        best_regret = avg_cfg_regret.min(axis=1)[0].mean()
-        # avg_regret = avg_cfg_regret.mean(axis=1).mean()
+    for i, r in enumerate(n_recs):
+        # Ix(k*r) -> r highest ranked configs * k neighbors
+        red_top_r_cfgs = top_r_cfgs_per_neighbor[:, :, :r].reshape(n_cfg, -1)
 
-        ranks.append(best_rank)
-        regrets.append(best_regret)
+        # Look-up the regret of the recommended configs on the query input
+        # Per input take the best regret and the average over all query inputs
+        best_regret[i] = torch.tensor(
+            [regret_arr[j, cfgs].min() for j, cfgs in enumerate(red_top_r_cfgs)]
+        ).mean()
 
-    return torch.tensor(ranks), torch.tensor(regrets)
+        best_rank[i] = torch.tensor(
+            [rank_arr[j, cfgs].min() for j, cfgs in enumerate(red_top_r_cfgs)],
+            dtype=torch.float
+        ).mean()
+
+        # We must have at least r x num configs unique elements
+        count_offset = n_cfg * r
+        uniq_vals = torch.tensor([torch.unique(row).numel() for row in red_top_r_cfgs])
+        share_ratios[i] = 1 - (torch.sum(uniq_vals) - count_offset) / (
+            red_top_r_cfgs.numel() - count_offset
+        )
+
+    return best_rank, best_regret, share_ratios
 
 
-def evaluate_cc(config_representation, rank_arr, n_neighbors, n_recs=[1, 3, 5], config_mask=None):
+def evaluate_cc(
+    config_representation, rank_arr, n_neighbors, n_recs=[1, 3, 5], config_mask=None
+):
     """
     Evaluation of the configuration representations.
 
@@ -440,6 +450,8 @@ def evaluate_cc(config_representation, rank_arr, n_neighbors, n_recs=[1, 3, 5], 
 
         topinds = torch.topk(rank_aggregation, k=r, dim=1, largest=False).indices
         uniq_vals = torch.tensor([torch.unique(row).numel() for row in topinds])
-        share_ratios[i] = 1 - (torch.sum(uniq_vals)-count_offset) / (topinds.numel()-count_offset)
+        share_ratios[i] = 1 - (torch.sum(uniq_vals) - count_offset) / (
+            topinds.numel() - count_offset
+        )
 
     return share_ratios
