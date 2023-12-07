@@ -359,9 +359,12 @@ def evaluate_ii(
     """
     Evaluation of the input representations.
 
-    For each input, we look-up the `n_neighbors` closest inputs in the representation space.
-    We evaluate their rank by:
-    - The average rank/regret they have for their top `n_recs` configurations
+    For each query input, we look-up the `n_neighbors` closest inputs in the representation space.
+    Each of these neighbors recommends their top `n_recs` configuration.
+    We evaluate:
+    - The best rank any of the recommendations achieves on the query inputs
+    - The best regret any of the recommendations achieves on the query inputs
+    - The ratio of configurations that are common in the recommendations.
     """
     top_inp = top_k_closest_euclidean(input_representation, k=n_neighbors)
 
