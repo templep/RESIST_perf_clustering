@@ -12,9 +12,6 @@ from common import load_x264, split_data, evaluate_ii, evaluate_cc
 
 # %%
 
-# parser = argparse.ArgumentParser()
-# parser.add_argument("")
-
 ## Configuration
 random_seed = 33154
 
