@@ -1,5 +1,5 @@
 import pandas as pd
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
 import torch
 import torch.nn.functional as F
 from main import load_all_csv
@@ -130,8 +130,8 @@ def load_x264(data_dir="../data/"):
     return perf_matrix, input_features, config_features, all_performances
 
 
-def split_data(perf_matrix, test_size=0.15, verbose=True, random_state=None):
-    # We set aside 15% of configurations and 15% of inputs as test data
+def split_data(perf_matrix, test_size=0.2, verbose=True, random_state=None):
+    # We set aside 20% of configurations and 20% of inputs as test data
     # This gives us 4 sets of data, of which we set 3 aside for testing
     train_cfg, test_cfg = train_test_split(
         perf_matrix["configurationID"].unique(),
@@ -187,6 +187,67 @@ def split_data(perf_matrix, test_size=0.15, verbose=True, random_state=None):
         "test_data_inp_new": test_inp_new,
         "test_data_both_new": test_both_new,
     }
+
+def split_data_cv(perf_matrix, splits=5, verbose=True, random_state=None):
+    kf_inp = KFold(n_splits=splits, random_state=random_state, shuffle=True)
+    kf_cfg = KFold(n_splits=splits, random_state=random_state, shuffle=True)
+
+    configuration_ids = perf_matrix["configurationID"].unique()
+    inputnames = perf_matrix["inputname"].unique()
+
+    for split_idx, ((train_cfg_idx, test_cfg_idx), (train_inp_idx, test_inp_idx)) in enumerate(zip(
+        kf_inp.split(configuration_ids),
+        kf_cfg.split(inputnames)
+    )):
+        train_cfg = configuration_ids[train_cfg_idx]
+        test_cfg = configuration_ids[test_cfg_idx]
+        train_inp = inputnames[train_inp_idx]
+        test_inp = inputnames[test_inp_idx]
+        train_cfg.sort()
+        test_cfg.sort()
+        train_inp.sort()
+        test_inp.sort()
+        train_data = perf_matrix[
+            perf_matrix["configurationID"].isin(train_cfg)
+            & perf_matrix["inputname"].isin(train_inp)
+        ]
+        test_cfg_new = perf_matrix[
+            perf_matrix["configurationID"].isin(test_cfg)
+            & perf_matrix["inputname"].isin(train_inp)
+        ]
+        test_inp_new = perf_matrix[
+            perf_matrix["configurationID"].isin(train_cfg)
+            & perf_matrix["inputname"].isin(test_inp)
+        ]
+        test_both_new = perf_matrix[
+            perf_matrix["configurationID"].isin(test_cfg)
+            & perf_matrix["inputname"].isin(test_inp)
+        ]
+        assert (
+            test_cfg_new.shape[0]
+            + test_inp_new.shape[0]
+            + test_both_new.shape[0]
+            + train_data.shape[0]
+            == perf_matrix.shape[0]
+        )
+
+        if verbose:
+            print(f"Training data: {100*train_data.shape[0]/perf_matrix.shape[0]:.2f}%")
+            print(f"Both new: {100*test_both_new.shape[0]/perf_matrix.shape[0]:.2f}%")
+            print(f"Config new: {100*test_cfg_new.shape[0]/perf_matrix.shape[0]:.2f}%")
+            print(f"Input new: {100*test_inp_new.shape[0]/perf_matrix.shape[0]:.2f}%")
+
+        yield {
+            "split": split_idx,
+            "train_cfg": train_cfg,
+            "test_cfg": test_cfg,
+            "train_inp": train_inp,
+            "test_inp": test_inp,
+            "train_data": train_data,
+            "test_data_cfg_new": test_cfg_new,
+            "test_data_inp_new": test_inp_new,
+            "test_data_both_new": test_both_new,
+        }
 
 
 ## Rank-based distance calculation via correlation
