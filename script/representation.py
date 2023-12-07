@@ -267,7 +267,7 @@ def make_batch_v3(inputs, configs, size, rank_map=None, lookup=None):
 num_input_features = train_input_arr.shape[1]
 num_config_features = train_config_arr.shape[1]
 emb_size = 32
-batch_size = 768
+batch_size = 512
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -277,11 +277,13 @@ input_emb = nn.Sequential(
 config_emb = nn.Sequential(
     nn.Linear(num_config_features, 64), nn.Dropout(), nn.ReLU(), nn.Linear(64, emb_size)
 ).to(device)
-perf_predict = nn.Sequential(
-    nn.Linear(2 * emb_size, 64),
-    nn.ReLU(),
-    nn.Linear(64, 1),  # TODO Check with |P| outputs
-)
+
+# TODO Implement performance prediction from latent space
+# perf_predict = nn.Sequential(
+#     nn.Linear(2 * emb_size, 64),
+#     nn.ReLU(),
+#     nn.Linear(64, 1),  # TODO Check with |P| outputs
+# )
 
 optimizer = torch.optim.AdamW(
     list(input_emb.parameters()) + list(config_emb.parameters()), lr=0.003
