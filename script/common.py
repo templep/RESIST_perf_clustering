@@ -348,13 +348,45 @@ def evaluate_ic(
     return best_rank, avg_rank, best_regret, avg_regret
 
 
+def top_k_closest_euclidean_with_masks(emb, query_mask, reference_mask, k):
+    if query_mask is None:
+        query_mask = torch.ones(emb.shape[0], dtype=bool)
+
+    if reference_mask is None:
+        reference_mask = torch.ones(emb.shape[0], dtype=bool)
+
+    queries = emb[query_mask]  # e.g. test inputs
+    references = emb[reference_mask]  # e.g. the training data for which we have measurements
+    
+    distance = torch.cdist(queries, references, p=2)
+    shared_items = (query_mask & reference_mask)
+
+    if shared_items.any():
+        qm = query_mask.cumsum(dim=0) - 1
+        dm = reference_mask.cumsum(dim=0) - 1
+
+        indices = [qm[shared_items], dm[shared_items]]
+        distance[indices] = distance.max() + 1
+
+    top_refs = torch.topk(distance, k=k, largest=False, dim=1).indices
+
+    # Remap reference indices in top_inp to original indices before continuing
+    ref_idx = torch.where(reference_mask)[0]
+    top_refs = torch.stack([ref_idx[r] for r in top_refs])
+
+    assert top_refs.shape == (emb.shape[0] if query_mask is None else query_mask.sum(), k), top_refs.shape
+
+    return top_refs
+
+
 def evaluate_ii(
     input_representation,
     rank_arr,
     regret_arr,
     n_neighbors,
     n_recs=[1, 3, 5],
-    input_mask=None,
+    query_mask=None,
+    reference_mask=None,
 ):
     """
     Evaluation of the input representations.
@@ -366,10 +398,7 @@ def evaluate_ii(
     - The best regret any of the recommendations achieves on the query inputs
     - The ratio of configurations that are common in the recommendations.
     """
-    top_inp = top_k_closest_euclidean(input_representation, k=n_neighbors)
-
-    if input_mask is not None:
-        top_inp = top_inp[input_mask]
+    top_inp = top_k_closest_euclidean_with_masks(input_representation, query_mask=query_mask, reference_mask=reference_mask, k=n_neighbors)
 
     # Foreach close input
     max_r = np.max(n_recs)
@@ -377,7 +406,7 @@ def evaluate_ii(
     top_r_regret_per_neighbor = []
     for r in top_inp:
         top_r_cfgs_per_neighbor.append(
-            torch.topk(regret_arr[r, :], k=max_r, dim=1, largest=False).indices
+            torch.topk(rank_arr[r, :], k=max_r, dim=1, largest=False).indices
         )
         top_r_regret_per_neighbor.append(
             torch.topk(regret_arr[r, :], k=max_r, dim=1, largest=False).values
@@ -389,35 +418,35 @@ def evaluate_ii(
     share_ratios = torch.empty(len(n_recs))
     best_regret = torch.empty(len(n_recs))
     best_rank = torch.empty(len(n_recs))
-    n_cfg = top_inp.shape[0]
+    n_queries = top_inp.shape[0]
 
     for i, r in enumerate(n_recs):
         # Ix(k*r) -> r highest ranked configs * k neighbors
-        red_top_r_cfgs = top_r_cfgs_per_neighbor[:, :, :r].reshape(n_cfg, -1)
+        reduced_top_r_cfgs = top_r_cfgs_per_neighbor[:, :, :r].reshape(n_queries, -1)
 
         # Look-up the regret of the recommended configs on the query input
         # Per input take the best regret and the average over all query inputs
         best_regret[i] = torch.tensor(
-            [regret_arr[j, cfgs].min() for j, cfgs in enumerate(red_top_r_cfgs)]
+            [regret_arr[j, cfgs].min() for j, cfgs in enumerate(reduced_top_r_cfgs)]
         ).mean()
 
         best_rank[i] = torch.tensor(
-            [rank_arr[j, cfgs].min() for j, cfgs in enumerate(red_top_r_cfgs)],
+            [rank_arr[j, cfgs].min() for j, cfgs in enumerate(reduced_top_r_cfgs)],
             dtype=torch.float
-        ).mean()
+        ).mean() / rank_arr.shape[1]
 
         # We must have at least r x num configs unique elements
-        count_offset = n_cfg * r
-        uniq_vals = torch.tensor([torch.unique(row).numel() for row in red_top_r_cfgs])
+        count_offset = n_queries * r
+        uniq_vals = torch.tensor([torch.unique(row).numel() for row in reduced_top_r_cfgs])
         share_ratios[i] = 1 - (torch.sum(uniq_vals) - count_offset) / (
-            red_top_r_cfgs.numel() - count_offset
+            reduced_top_r_cfgs.numel() - count_offset
         )
 
     return best_rank, best_regret, share_ratios
 
 
 def evaluate_cc(
-    config_representation, rank_arr, n_neighbors, n_recs=[1, 3, 5], config_mask=None
+    config_representation, rank_arr, regret_arr, n_neighbors, n_recs=[1, 3, 5], query_mask=None, reference_mask=None
 ):
     """
     Evaluation of the configuration representations.
@@ -428,33 +457,48 @@ def evaluate_cc(
 
     n_recs is a parameter for the stability of the configuration.
     """
-    if n_neighbors == 1:
-        return torch.ones((len(n_recs)))
+    top_cfg = top_k_closest_euclidean_with_masks(config_representation, query_mask=query_mask, reference_mask=reference_mask, k=n_neighbors)
 
-    # (C, n_neighbors)
-    top_cfg = top_k_closest_euclidean(config_representation, k=n_neighbors)
-
-    if config_mask is not None:
-        top_cfg = top_cfg[config_mask]
-
-    rank_aggregation = rank_arr[:, top_cfg].permute([1, 0, 2])
-    assert rank_aggregation.shape == (
-        top_cfg.shape[0],
-        rank_arr.shape[0],
-        n_neighbors,
-    )
-
-    share_ratios = torch.empty((len(n_recs)))
-    n_cfg = top_cfg.shape[0]
-
-    for i, r in enumerate(n_recs):
-        # We must have at least r x num configs unique elements
-        count_offset = n_cfg * r
-
-        topinds = torch.topk(rank_aggregation, k=r, dim=1, largest=False).indices
-        uniq_vals = torch.tensor([torch.unique(row).numel() for row in topinds])
-        share_ratios[i] = 1 - (torch.sum(uniq_vals) - count_offset) / (
-            topinds.numel() - count_offset
+    # Foreach close config
+    max_r = np.max(n_recs)
+    top_r_ranks_per_neighbor = []
+    top_r_regret_per_neighbor = []
+    for neighbors in top_cfg:
+        top_r_ranks_per_neighbor.append(
+            torch.topk(rank_arr[:, neighbors], k=max_r, dim=0, largest=False).indices
+        )
+        top_r_regret_per_neighbor.append(
+            torch.topk(regret_arr[:, neighbors], k=max_r, dim=0, largest=False).values
         )
 
-    return share_ratios
+    top_r_ranks_per_neighbor = torch.stack(top_r_ranks_per_neighbor)
+    top_r_regret_per_neighbor = torch.stack(top_r_regret_per_neighbor)
+
+    share_ratios = torch.empty(len(n_recs))
+    mean_regret = torch.empty(len(n_recs))
+    mean_rank = torch.empty(len(n_recs))
+    n_queries = top_cfg.shape[0]
+
+    for i, r in enumerate(n_recs):
+        # Cx(k*r) -> r highest ranked inputs * k neighbors
+        reduced_top_r_inps = top_r_ranks_per_neighbor[:, :r, :].reshape(n_queries, -1)
+
+        # Look-up the regret of the recommended configs on the query input
+        # Per input take the best regret and the average over all query inputs
+        mean_regret[i] = torch.tensor(
+            [regret_arr[inps, j].mean() for j, inps in enumerate(reduced_top_r_inps)]
+        ).mean()
+
+        mean_rank[i] = torch.tensor(
+            [rank_arr[inps, j].float().mean() for j, inps in enumerate(reduced_top_r_inps)],
+            dtype=torch.float
+        ).mean() / rank_arr.shape[0]
+
+        # We must have at least r x num inputs unique elements
+        count_offset = n_queries * r
+        uniq_vals = torch.tensor([torch.unique(row).numel() for row in reduced_top_r_inps])
+        share_ratios[i] = 1 - (torch.sum(uniq_vals) - count_offset) / (
+            reduced_top_r_inps.numel() - count_offset
+        )
+
+    return mean_rank, mean_regret, share_ratios
