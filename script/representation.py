@@ -44,7 +44,7 @@ perf_matrix, input_features, config_features, all_performances = load_x264(
 )
 performances = ["rel_kbs"]
 
-print(f"Loaded data x264")
+print("Loaded data x264")
 print(f"perf_matrix:{perf_matrix.shape}")
 print(f"input_features:{input_features.shape}")
 print(f"config_features:{config_features.shape}")
@@ -392,6 +392,7 @@ def train_model(
         .pivot_table(index="inputname", columns="configurationID", values=performance)
         .values
     ).to(device)
+    rank_arr_cfg = regret_arr.T.argsort(dim=1)
 
     train_input_arr = train_input_arr.to(device)
     train_config_arr = train_config_arr.to(device)
@@ -430,7 +431,10 @@ def train_model(
             torch.argsort(distmat, dim=1).float(),
             rank_arr[input_indices, :][:, config_indices].float(),
         )
-        # loss += lnloss(torch.argsort(distmat.T, dim=1).float(), rank_arr.float())
+        loss += 0.05 * lnloss(
+            torch.argsort(distmat.T, dim=1).float(),
+            rank_arr_cfg[config_indices, :][:, input_indices].float(),
+        )
 
         loss.backward()
         optimizer.step()
@@ -493,9 +497,6 @@ def train_model(
 
     print(best_logmsg)
     return best_models
-
-
-# %%
 
 
 # %%
@@ -740,5 +741,37 @@ for data_split in split_data_cv(perf_matrix, random_state=random_seed):
 
 full_df = pd.concat(dfs)
 full_df.groupby(["mode", "split", "metric", "k"]).mean()
+
+# %%
+
+from sklearn.metrics import mean_absolute_percentage_error
+from sklearn.preprocessing import StandardScaler
+from sklearn.neural_network import MLPRegressor
+
+td = data_split["train_data"]
+indices = np.vstack(
+    (
+        td.configurationID.apply(lambda s: np.where(train_cfg == s)[0].item()).values,
+        td.inputname.apply(lambda s: np.where(train_inp == s)[0].item()).values,
+    )
+).T
+
+scaler = StandardScaler()
+y = scaler.fit_transform(td[performances[0]].values.reshape(-1,))
+
+with torch.no_grad():
+    X = torch.concat(
+        (
+            input_emb(train_input_arr)[indices[:, 1]],
+            config_emb(train_config_arr)[indices[:, 0]],
+        ),
+        dim=1,
+    ).numpy()
+
+m = MLPRegressor(hidden_layer_sizes=(100,), verbose=True)
+m.fit(X, y)
+print("Train score", m.score(X, y))
+yp = m.predict(X)
+print("Train MAPE", mean_absolute_percentage_error(y, yp))
 
 # %%
