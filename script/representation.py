@@ -502,7 +502,7 @@ def train_model(
 # %%
 
 dfs = []
-random_seed = 33154
+random_seed = 59590  # 33154
 
 # Number of nearest neighbours to consider
 # Make multiples to allow better budget comparison
@@ -561,7 +561,7 @@ for data_split in split_data_cv(perf_matrix, random_state=random_seed):
             "test_cfg": test_cfg,
             "split": data_split["split"],
         },
-        open(f"representation_{data_split['split']}.p", "wb"),
+        open(f"representation_{data_split['split']}_s{random_seed}.p", "wb"),
     )
 
     input_embeddings = input_emb(input_arr)
@@ -744,6 +744,83 @@ full_df.groupby(["mode", "split", "metric", "k"]).mean()
 
 # %%
 
+dfmean = (
+    full_df.reset_index()
+    .groupby(["mode", "split", "metric", "k"], as_index=False)
+    .mean()
+)
+
+# %%
+
+m = pd.concat(
+    (
+        dfmean[
+            (dfmean["mode"] == "ii")
+            & (dfmean["split"] == "test")
+            & (dfmean["metric"] == "rank")
+        ]
+        .drop(columns=["mode", "split", "metric"])
+        .set_index("k"),
+        dfmean[
+            (dfmean["mode"] == "ii")
+            & (dfmean["split"] == "test")
+            & (dfmean["metric"] == "ratio")
+        ]
+        .drop(columns=["mode", "split", "metric"])
+        .set_index("k"),
+        dfmean[
+            (dfmean["mode"] == "ii")
+            & (dfmean["split"] == "test")
+            & (dfmean["metric"] == "regret")
+        ]
+        .drop(columns=["mode", "split", "metric"])
+        .set_index("k"),
+    ),
+    axis=1,
+    keys=["rank", "ratio", "regret"],
+)
+print(m.to_latex(index=True, float_format="%.2f", na_rep="-", caption="Input-Input"))
+
+# %%
+
+m = pd.concat(
+    (
+        dfmean[
+            (dfmean["mode"] == "cc")
+            & (dfmean["split"] == "test")
+            & (dfmean["metric"] == "rank")
+        ]
+        .drop(columns=["mode", "split", "metric"])
+        .set_index("k"),
+        dfmean[
+            (dfmean["mode"] == "cc")
+            & (dfmean["split"] == "test")
+            & (dfmean["metric"] == "ratio")
+        ]
+        .drop(columns=["mode", "split", "metric"])
+        .set_index("k"),
+        dfmean[
+            (dfmean["mode"] == "cc")
+            & (dfmean["split"] == "test")
+            & (dfmean["metric"] == "regret")
+        ]
+        .drop(columns=["mode", "split", "metric"])
+        .set_index("k"),
+    ),
+    axis=1,
+    keys=["rank", "ratio", "regret"],
+)
+print(
+    m.to_latex(
+        index=True,
+        float_format="%.2f",
+        na_rep="-",
+        caption="Configuration-Configuration",
+    )
+)
+
+# %%
+
 from sklearn.metrics import mean_absolute_percentage_error
 from sklearn.preprocessing import StandardScaler
 from sklearn.neural_network import MLPRegressor
@@ -757,7 +834,11 @@ indices = np.vstack(
 ).T
 
 scaler = StandardScaler()
-y = scaler.fit_transform(td[performances[0]].values.reshape(-1,))
+y = scaler.fit_transform(
+    td[performances[0]].values.reshape(
+        -1,
+    )
+)
 
 with torch.no_grad():
     X = torch.concat(
