@@ -1,13 +1,23 @@
 # %%
 import torch
 from torch import nn
+import torch.nn.functional as F
 import numpy as np
 import pandas as pd
 import itertools
 from scipy import stats
-from common import split_data, load_x264, evaluate_ic, evaluate_ii
+from common import (
+    split_data,
+    load_x264,
+    evaluate_ic,
+    evaluate_ii,
+    split_data_cv,
+    evaluate_cc,
+    prepare_result_df,
+)
 import pickle
 import os
+import copy
 
 # Purpose of this file
 # We learn a simple embedding of the input and configuration vectors
@@ -56,10 +66,10 @@ all_config_ids = pd.Series(
     input_config_map.index.get_level_values("configurationID").unique()
 )
 
-error_regret = input_config_map.groupby("inputname").transform(
+regret_map = input_config_map.groupby("inputname").transform(
     lambda x: (x - x.min()).abs() / abs(x.min())
 )
-average_regret = error_regret.mean(axis=1)
+average_regret = regret_map.mean(axis=1)
 
 rank_map = input_config_map.groupby("inputname").transform(
     lambda x: stats.rankdata(x, method="min")
@@ -151,8 +161,12 @@ config_map = {s: i for i, s in enumerate(train_cfg)}
 
 
 # TODO Make vectorized version that splits evenly between the tasks
-def make_batch(inputs, configs, size, rank_map=None, lookup=None):
+def make_batch(
+    inputs, configs, size, input_map, config_map, rank_map=None, lookup=None
+):
     batch_idx = []
+    input_indices = []
+    config_indices = []
     for _ in range(size):
         task = np.random.choice(4)
         if task == 0:  # iii
@@ -181,8 +195,26 @@ def make_batch(inputs, configs, size, rank_map=None, lookup=None):
                 input_map[n] if t[2] == "i" else config_map[n],
             )
         )
+        if t[0] == "i":
+            input_indices.append(input_map[a])
+        else:
+            config_indices.append(config_map[a])
 
-    return torch.tensor(batch_idx)
+        if t[1] == "i":
+            input_indices.append(input_map[p])
+        else:
+            config_indices.append(config_map[p])
+
+        if t[2] == "i":
+            input_indices.append(input_map[n])
+        else:
+            config_indices.append(config_map[n])
+
+    return (
+        torch.tensor(batch_idx),
+        torch.tensor(input_indices),
+        torch.tensor(config_indices),
+    )
 
 
 def make_batch_v2(inputs, configs, size, rank_map=None, lookup=None):
@@ -264,136 +296,449 @@ def make_batch_v3(inputs, configs, size, rank_map=None, lookup=None):
 
 # %%
 
-num_input_features = train_input_arr.shape[1]
-num_config_features = train_config_arr.shape[1]
-emb_size = 32
-batch_size = 512
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+class ListNetLoss(nn.Module):
+    def __init__(self):
+        super(ListNetLoss, self).__init__()
 
-input_emb = nn.Sequential(
-    nn.Linear(num_input_features, 64), nn.Dropout(), nn.ReLU(), nn.Linear(64, emb_size)
-).to(device)
-config_emb = nn.Sequential(
-    nn.Linear(num_config_features, 64), nn.Dropout(), nn.ReLU(), nn.Linear(64, emb_size)
-).to(device)
+    def forward(self, pred_scores, true_scores):
+        """
+        pred_scores: Tensor of predicted scores (batch_size x list_size)
+        true_scores: Tensor of ground truth scores (batch_size x list_size)
+        """
+        # Convert scores to probabilities
+        pred_probs = F.softmax(pred_scores, dim=1)
+        true_probs = F.softmax(true_scores, dim=1)
 
-# TODO Implement performance prediction from latent space
-# perf_predict = nn.Sequential(
-#     nn.Linear(2 * emb_size, 64),
-#     nn.ReLU(),
-#     nn.Linear(64, 1),  # TODO Check with |P| outputs
-# )
-
-optimizer = torch.optim.AdamW(
-    list(input_emb.parameters()) + list(config_emb.parameters()), lr=0.003
-)
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
-
-# TODO For our dataset size it is relatively cheap to calculate the embeddings for all inputs and configs.
-# We can every few iterations update a full collection and collect the hardest triplets from it.
-#
-# with torch.no_grad():
-#     emb_lookup = torch.empty(
-#         (train_input_arr.shape[0] + train_config_arr.shape[0], emb_size)
-#     )
-#     emb_lookup[: train_input_arr.shape[0]] = input_emb(train_input_arr)
-#     emb_lookup[train_input_arr.shape[0] :] = config_emb(train_config_arr)
-
-# For evaluation
-rank_arr = torch.from_numpy(
-    rank_map.loc[(train_inp, train_cfg), :]
-    .reset_index()
-    .pivot_table(index="inputname", columns="configurationID", values=performances[0])
-    .values
-).to(device)
-regret_arr = torch.from_numpy(
-    error_regret.loc[(train_inp, train_cfg), :]
-    .reset_index()
-    .pivot_table(index="inputname", columns="configurationID", values=performances[0])
-    .values
-).to(device)
-
-train_input_arr = train_input_arr.to(device)
-train_config_arr = train_config_arr.to(device)
-
-total_loss = 0
-
-# Early stopping
-best_loss = 999
-best_loss_iter = 90
-patience = 400
-
-# LR schedule
+        # Compute cross-entropy loss
+        return -torch.sum(true_probs * torch.log(pred_probs + 1e-10), dim=1).mean()
 
 
-for iteration in range(10_000):
-    batch = (
-        make_batch(train_inp, train_cfg, batch_size, rank_map=rank_map)
-        .reshape((-1, 2))
-        .to(device)
+# %%
+def train_model(
+    train_inp,
+    train_cfg,
+    train_input_arr,
+    train_config_arr,
+    rank_map,
+    error_regret,
+    performance,
+):
+    num_input_features = train_input_arr.shape[1]
+    num_config_features = train_config_arr.shape[1]
+    input_map = {s: i for i, s in enumerate(train_inp)}
+    config_map = {s: i for i, s in enumerate(train_cfg)}
+    emb_size = 32
+    batch_size = 2048
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    input_emb = nn.Sequential(
+        nn.Linear(num_input_features, 64),
+        nn.Dropout(),
+        nn.ReLU(),
+        nn.Linear(64, emb_size),
+    ).to(device)
+    config_emb = nn.Sequential(
+        nn.Linear(num_config_features, 64),
+        nn.Dropout(),
+        nn.ReLU(),
+        nn.Linear(64, emb_size),
+    ).to(device)
+
+    # TODO Implement performance prediction from latent space
+    # perf_predict = nn.Sequential(
+    #     nn.Linear(2 * emb_size, 64),
+    #     nn.ReLU(),
+    #     nn.Linear(64, 1),  # TODO Check with |P| outputs
+    # )
+
+    optimizer = torch.optim.AdamW(
+        list(input_emb.parameters()) + list(config_emb.parameters()), lr=0.001
     )
-    input_row = batch[:, 0] == 1
-    assert (
-        batch.shape[1] == 2
-    ), "Make sure to reshape batch to two columns (type, index)"
-
-    # TODO inputembs collapse quickly. How to avoid?
-
-    optimizer.zero_grad()
-    embeddings = torch.empty((batch.shape[0], emb_size), device=device)
-    embeddings[input_row] = input_emb(train_input_arr[batch[input_row, 1]])
-    embeddings[~input_row] = config_emb(train_config_arr[batch[~input_row, 1]])
-    loss = nn.functional.triplet_margin_loss(
-        anchor=embeddings[0::3],
-        positive=embeddings[1::3],
-        negative=embeddings[2::3],
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, "min", verbose=True
     )
-    loss.backward()
-    optimizer.step()
-    total_loss += loss.cpu().item()
 
-    if iteration > 0 and iteration % 10 == 0:
-        total_loss /= 10
-        scheduler.step(total_loss)
+    lnloss = ListNetLoss()
 
-        with torch.no_grad():
-            inputembs = input_emb(train_input_arr)
-            icc_best_rank, icc_avg_rank, icc_best_regret, icc_avg_regret = evaluate_ic(
-                inputembs,
-                config_emb(train_config_arr),
-                rank_arr,
-                regret_arr,
-                k=5,
-            )
-            iii_ranks, iii_regret, _ = evaluate_ii(
-                inputembs,
-                rank_arr,
-                regret_arr,
-                n_neighbors=5,
-                n_recs=[1, 3, 5, 15, 25],
-            )
-            print(
-                f"{iteration} "
-                + f"l:{total_loss:.3f} | "
-                + f"icc(rank(best:{icc_best_rank:.2f} "
-                + f"avg:{icc_avg_rank:.2f}) "
-                + f"regret(best:{icc_best_regret:.2f} "
-                + f"avg:{icc_avg_regret:.2f})) | "
-                + f"iii(rank({iii_ranks.numpy().round(2)} "
-                + f"regret({iii_regret.numpy().round(2)}) "
-            )
+    # Early stopping
+    best_loss = np.inf
+    best_loss_iter = 0
+    best_logmsg = None
+    best_models = (None, None)
+    patience = 200
 
-            if total_loss < best_loss:
-                best_loss_iter = iteration
-                best_loss = total_loss
-            elif (iteration - best_loss_iter) >= patience:
-                print(
-                    f"No loss improvement since {patience} iterations. Stop training."
+    # TODO For our dataset size it is relatively cheap to calculate the embeddings for all inputs and configs.
+    # We can every few iterations update a full collection and collect the hardest triplets from it.
+    #
+    # with torch.no_grad():
+    #     emb_lookup = torch.empty(
+    #         (train_input_arr.shape[0] + train_config_arr.shape[0], emb_size)
+    #     )
+    #     emb_lookup[: train_input_arr.shape[0]] = input_emb(train_input_arr)
+    #     emb_lookup[train_input_arr.shape[0] :] = config_emb(train_config_arr)
+
+    # For evaluation
+    rank_arr = torch.from_numpy(
+        rank_map.loc[(train_inp, train_cfg), :]
+        .reset_index()
+        .pivot_table(index="inputname", columns="configurationID", values=performance)
+        .values
+    ).to(device)
+    regret_arr = torch.from_numpy(
+        error_regret.loc[(train_inp, train_cfg), :]
+        .reset_index()
+        .pivot_table(index="inputname", columns="configurationID", values=performance)
+        .values
+    ).to(device)
+
+    train_input_arr = train_input_arr.to(device)
+    train_config_arr = train_config_arr.to(device)
+
+    total_loss = 0
+
+    for iteration in range(1000):
+        batch, input_indices, config_indices = make_batch(
+            train_inp,
+            train_cfg,
+            batch_size,
+            input_map=input_map,
+            config_map=config_map,
+            rank_map=rank_map,
+        )
+        batch = batch.reshape((-1, 2)).to(device)
+        input_indices = input_indices.to(device)
+        config_indices = config_indices.to(device)
+        input_row = batch[:, 0] == 1
+        assert (
+            batch.shape[1] == 2
+        ), "Make sure to reshape batch to two columns (type, index)"
+
+        optimizer.zero_grad()
+        embeddings = torch.empty((batch.shape[0], emb_size), device=device)
+        embeddings[input_row] = input_emb(train_input_arr[batch[input_row, 1]])
+        embeddings[~input_row] = config_emb(train_config_arr[batch[~input_row, 1]])
+        loss = nn.functional.triplet_margin_loss(
+            anchor=embeddings[0::3],
+            positive=embeddings[1::3],
+            negative=embeddings[2::3],
+        )
+
+        distmat = torch.cdist(embeddings[input_row], embeddings[~input_row])
+        loss += 0.05 * lnloss(
+            torch.argsort(distmat, dim=1).float(),
+            rank_arr[input_indices, :][:, config_indices].float(),
+        )
+        # loss += lnloss(torch.argsort(distmat.T, dim=1).float(), rank_arr.float())
+
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.cpu().item()
+
+        if iteration > 0 and iteration % 10 == 0:
+            total_loss /= 10
+            scheduler.step(total_loss)
+
+            with torch.no_grad():
+                inputembs = input_emb(train_input_arr)
+
+                if inputembs.std(axis=0).mean() < 0.05:
+                    print("Input embeddings collapsed")
+                    break
+
+                (
+                    icc_best_rank,
+                    icc_avg_rank,
+                    icc_best_regret,
+                    icc_avg_regret,
+                ) = evaluate_ic(
+                    inputembs,
+                    config_emb(train_config_arr),
+                    rank_arr,
+                    regret_arr,
+                    k=5,
                 )
-                break
+                iii_ranks, iii_regret, _ = evaluate_ii(
+                    inputembs,
+                    rank_arr,
+                    regret_arr,
+                    n_neighbors=5,
+                    n_recs=[1, 3, 5, 15, 25],
+                )
+                logmsg = (
+                    f"{iteration} "
+                    + f"l:{total_loss:.3f} | "
+                    + f"ic(rank(best:{icc_best_rank:.2f} "
+                    + f"avg:{icc_avg_rank:.2f}) "
+                    + f"regret(best:{icc_best_regret:.2f} "
+                    + f"avg:{icc_avg_regret:.2f})) | "
+                    + f"ii(rank({iii_ranks.numpy().round(2)} "
+                    + f"regret({iii_regret.numpy().round(2)}) "
+                )
+                print(logmsg)
 
-            total_loss = 0
+                if total_loss < best_loss:
+                    best_loss_iter = iteration
+                    best_loss = total_loss
+                    best_logmsg = logmsg
+                    best_models = (copy.deepcopy(input_emb), copy.deepcopy(config_emb))
+                elif (iteration - best_loss_iter) >= patience:
+                    print(
+                        f"No loss improvement since {patience} iterations. Stop training."
+                    )
+                    break
 
+                total_loss = 0
+
+    print(best_logmsg)
+    return best_models
+
+
+# %%
+
+
+# %%
+
+dfs = []
+random_seed = 33154
+
+# Number of nearest neighbours to consider
+# Make multiples to allow better budget comparison
+topk_values = (1, 3, 5, 15, 25)
+topr_values = (1, 3, 5, 15, 25)
+
+rank_arr = torch.from_numpy(
+    rank_map.reset_index()
+    .pivot_table(index="inputname", columns="configurationID", values=performances[0])
+    .values
+)
+regret_arr = torch.from_numpy(
+    regret_map.reset_index()
+    .pivot_table(index="inputname", columns="configurationID", values=performances[0])
+    .values
+)
+
+for data_split in split_data_cv(perf_matrix, random_state=random_seed):
+    train_inp = data_split["train_inp"]
+    train_cfg = data_split["train_cfg"]
+    test_inp = data_split["test_inp"]
+    test_cfg = data_split["test_cfg"]
+
+    # Prepare and select training/test data according to random split
+    input_arr = torch.from_numpy(input_features.values).float()
+    config_arr = torch.from_numpy(config_features.values).float()
+    train_input_mask = input_features.index.isin(train_inp)
+    test_input_mask = input_features.index.isin(test_inp)
+
+    train_config_mask = config_features.index.isin(train_cfg)
+    test_config_mask = config_features.index.isin(test_cfg)
+
+    train_input_arr = input_arr[train_input_mask]
+    train_config_arr = config_arr[train_config_mask]
+
+    best_models = train_model(
+        train_inp=train_inp,
+        train_cfg=train_cfg,
+        train_input_arr=train_input_arr,
+        train_config_arr=train_config_arr,
+        rank_map=rank_map,
+        error_regret=regret_map,
+        performance=performances[0],
+    )
+    input_emb, config_emb = best_models
+    input_emb = input_emb.cpu()
+    config_emb = config_emb.cpu()
+
+    torch.save(
+        {
+            "input_emb": input_emb,
+            "config_emb": config_emb,
+            "train_inp": train_inp,
+            "train_cfg": train_cfg,
+            "test_inp": test_inp,
+            "test_cfg": test_cfg,
+            "split": data_split["split"],
+        },
+        open(f"representation_{data_split['split']}.p", "wb"),
+    )
+
+    input_embeddings = input_emb(input_arr)
+    config_embeddings = config_emb(config_arr)
+
+    train_cc_rank = []
+    train_cc_ratio = []
+    train_cc_regret = []
+
+    test_cc_rank = []
+    test_cc_ratio = []
+    test_cc_regret = []
+
+    train_ii_rank = []
+    train_ii_ratio = []
+    train_ii_regret = []
+
+    test_ii_rank = []
+    test_ii_ratio = []
+    test_ii_regret = []
+
+    # Query: test data
+    # Database: train data
+
+    for topk in topk_values:
+        train_cc = evaluate_cc(
+            config_embeddings,
+            rank_arr=rank_arr,
+            regret_arr=regret_arr,
+            n_neighbors=topk,
+            n_recs=topr_values,
+            query_mask=torch.from_numpy(train_config_mask),
+            reference_mask=torch.from_numpy(train_config_mask),
+        )
+        train_cc_rank.append(train_cc[0].numpy())
+        train_cc_regret.append(train_cc[1].numpy())
+        train_cc_ratio.append(train_cc[2].numpy())
+
+        test_cc = evaluate_cc(
+            config_embeddings,
+            rank_arr=rank_arr,
+            regret_arr=regret_arr,
+            n_neighbors=topk,
+            n_recs=topr_values,
+            query_mask=torch.from_numpy(test_config_mask),
+            reference_mask=torch.from_numpy(train_config_mask),
+        )
+        test_cc_rank.append(test_cc[0].numpy())
+        test_cc_regret.append(test_cc[1].numpy())
+        test_cc_ratio.append(test_cc[2].numpy())
+
+        train_ii = evaluate_ii(
+            input_embeddings,
+            rank_arr=rank_arr,
+            regret_arr=regret_arr,
+            n_neighbors=topk,
+            n_recs=topr_values,
+            query_mask=torch.from_numpy(train_input_mask),
+            reference_mask=torch.from_numpy(train_input_mask),
+        )
+        train_ii_rank.append(train_ii[0].numpy())
+        train_ii_regret.append(train_ii[1].numpy())
+        train_ii_ratio.append(train_ii[2].numpy())
+
+        test_ii = evaluate_ii(
+            input_embeddings,
+            rank_arr=rank_arr,
+            regret_arr=regret_arr,
+            n_neighbors=topk,
+            n_recs=topr_values,
+            query_mask=torch.from_numpy(test_input_mask),
+            reference_mask=torch.from_numpy(train_input_mask),
+        )
+        test_ii_rank.append(test_ii[0].numpy())
+        test_ii_regret.append(test_ii[1].numpy())
+        test_ii_ratio.append(test_ii[2].numpy())
+
+    dfs.append(
+        prepare_result_df(
+            train_cc_rank,
+            topr_values,
+            topk_values,
+            {"metric": "rank", "mode": "cc", "split": "train"},
+        )
+    )
+    dfs.append(
+        prepare_result_df(
+            train_cc_regret,
+            topr_values,
+            topk_values,
+            {"metric": "regret", "mode": "cc", "split": "train"},
+        )
+    )
+    dfs.append(
+        prepare_result_df(
+            train_cc_ratio,
+            topr_values,
+            topk_values,
+            {"metric": "ratio", "mode": "cc", "split": "train"},
+        )
+    )
+
+    dfs.append(
+        prepare_result_df(
+            test_cc_rank,
+            topr_values,
+            topk_values,
+            {"metric": "rank", "mode": "cc", "split": "test"},
+        )
+    )
+    dfs.append(
+        prepare_result_df(
+            test_cc_regret,
+            topr_values,
+            topk_values,
+            {"metric": "regret", "mode": "cc", "split": "test"},
+        )
+    )
+    dfs.append(
+        prepare_result_df(
+            test_cc_ratio,
+            topr_values,
+            topk_values,
+            {"metric": "ratio", "mode": "cc", "split": "test"},
+        )
+    )
+
+    dfs.append(
+        prepare_result_df(
+            train_ii_rank,
+            topr_values,
+            topk_values,
+            {"metric": "rank", "mode": "ii", "split": "train"},
+        )
+    )
+    dfs.append(
+        prepare_result_df(
+            train_ii_regret,
+            topr_values,
+            topk_values,
+            {"metric": "regret", "mode": "ii", "split": "train"},
+        )
+    )
+    dfs.append(
+        prepare_result_df(
+            train_ii_ratio,
+            topr_values,
+            topk_values,
+            {"metric": "ratio", "mode": "ii", "split": "train"},
+        )
+    )
+
+    dfs.append(
+        prepare_result_df(
+            test_ii_rank,
+            topr_values,
+            topk_values,
+            {"metric": "rank", "mode": "ii", "split": "test"},
+        )
+    )
+    dfs.append(
+        prepare_result_df(
+            test_ii_regret,
+            topr_values,
+            topk_values,
+            {"metric": "regret", "mode": "ii", "split": "test"},
+        )
+    )
+    dfs.append(
+        prepare_result_df(
+            test_ii_ratio,
+            topr_values,
+            topk_values,
+            {"metric": "ratio", "mode": "ii", "split": "test"},
+        )
+    )
+
+full_df = pd.concat(dfs)
+full_df.groupby(["mode", "split", "metric", "k"]).mean()
 
 # %%

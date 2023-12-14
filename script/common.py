@@ -188,17 +188,18 @@ def split_data(perf_matrix, test_size=0.2, verbose=True, random_state=None):
         "test_data_both_new": test_both_new,
     }
 
-def split_data_cv(perf_matrix, splits=5, verbose=True, random_state=None):
+
+def split_data_cv(perf_matrix, splits=4, verbose=True, random_state=None):
     kf_inp = KFold(n_splits=splits, random_state=random_state, shuffle=True)
     kf_cfg = KFold(n_splits=splits, random_state=random_state, shuffle=True)
 
     configuration_ids = perf_matrix["configurationID"].unique()
     inputnames = perf_matrix["inputname"].unique()
 
-    for split_idx, ((train_cfg_idx, test_cfg_idx), (train_inp_idx, test_inp_idx)) in enumerate(zip(
-        kf_inp.split(configuration_ids),
-        kf_cfg.split(inputnames)
-    )):
+    for split_idx, (
+        (train_cfg_idx, test_cfg_idx),
+        (train_inp_idx, test_inp_idx),
+    ) in enumerate(zip(kf_inp.split(configuration_ids), kf_cfg.split(inputnames))):
         train_cfg = configuration_ids[train_cfg_idx]
         test_cfg = configuration_ids[test_cfg_idx]
         train_inp = inputnames[train_inp_idx]
@@ -397,12 +398,14 @@ def evaluate_ic(
         top_cfg = top_k_closest_cosine(input_representation, config_representation, k=k)
 
     # Ranks
-    cfg_ranks = torch.gather(rank_arr, 1, top_cfg).float()
+    cfg_ranks = (
+        (torch.gather(rank_arr, 1, top_cfg).float() - 1) / rank_arr.shape[1] * 100
+    )
     best_rank = cfg_ranks.min(axis=1)[0].mean()
     avg_rank = cfg_ranks.mean(axis=1).mean()
 
     # Regret
-    cfg_regret = torch.gather(regret_arr, 1, top_cfg).float()
+    cfg_regret = torch.gather(regret_arr, 1, top_cfg).float() * 100
     best_regret = cfg_regret.min(axis=1)[0].mean()
     avg_regret = cfg_regret.mean(axis=1).mean()
 
@@ -417,10 +420,12 @@ def top_k_closest_euclidean_with_masks(emb, query_mask, reference_mask, k):
         reference_mask = torch.ones(emb.shape[0], dtype=bool, device=emb.device)
 
     queries = emb[query_mask]  # e.g. test inputs
-    references = emb[reference_mask]  # e.g. the training data for which we have measurements
-    
+    references = emb[
+        reference_mask
+    ]  # e.g. the training data for which we have measurements
+
     distance = torch.cdist(queries, references, p=2)
-    shared_items = (query_mask & reference_mask)
+    shared_items = query_mask & reference_mask
 
     if shared_items.any():
         qm = query_mask.cumsum(dim=0) - 1
@@ -435,7 +440,10 @@ def top_k_closest_euclidean_with_masks(emb, query_mask, reference_mask, k):
     ref_idx = torch.where(reference_mask)[0]
     top_refs = torch.stack([ref_idx[r] for r in top_refs])
 
-    assert top_refs.shape == (emb.shape[0] if query_mask is None else query_mask.sum(), k), top_refs.shape
+    assert top_refs.shape == (
+        emb.shape[0] if query_mask is None else query_mask.sum(),
+        k,
+    ), top_refs.shape
 
     return top_refs
 
@@ -459,7 +467,12 @@ def evaluate_ii(
     - The best regret any of the recommendations achieves on the query inputs
     - The ratio of configurations that are common in the recommendations.
     """
-    top_inp = top_k_closest_euclidean_with_masks(input_representation, query_mask=query_mask, reference_mask=reference_mask, k=n_neighbors)
+    top_inp = top_k_closest_euclidean_with_masks(
+        input_representation,
+        query_mask=query_mask,
+        reference_mask=reference_mask,
+        k=n_neighbors,
+    )
 
     # Foreach close input
     max_r = np.max(n_recs)
@@ -487,27 +500,50 @@ def evaluate_ii(
 
         # Look-up the regret of the recommended configs on the query input
         # Per input take the best regret and the average over all query inputs
-        best_regret[i] = torch.tensor(
-            [regret_arr[j, cfgs].min() for j, cfgs in enumerate(reduced_top_r_cfgs)]
-        ).mean()
+        best_regret[i] = (
+            torch.tensor(
+                [regret_arr[j, cfgs].min() for j, cfgs in enumerate(reduced_top_r_cfgs)]
+            ).mean()
+            * 100
+        )
 
-        best_rank[i] = torch.tensor(
-            [rank_arr[j, cfgs].min() for j, cfgs in enumerate(reduced_top_r_cfgs)],
-            dtype=torch.float
-        ).mean() / rank_arr.shape[1]
+        best_rank[i] = (
+            (
+                torch.tensor(
+                    [
+                        rank_arr[j, cfgs].min()
+                        for j, cfgs in enumerate(reduced_top_r_cfgs)
+                    ],
+                    dtype=torch.float,
+                ).mean()
+                - 1
+            )
+            / rank_arr.shape[1]
+            * 100
+        )
 
         # We must have at least r x num configs unique elements
         count_offset = n_queries * r
-        uniq_vals = torch.tensor([torch.unique(row).numel() for row in reduced_top_r_cfgs])
-        share_ratios[i] = 1 - (torch.sum(uniq_vals) - count_offset) / (
-            reduced_top_r_cfgs.numel() - count_offset
+        uniq_vals = torch.tensor(
+            [torch.unique(row).numel() for row in reduced_top_r_cfgs]
         )
+        share_ratios[i] = (
+            1
+            - (torch.sum(uniq_vals) - count_offset)
+            / (reduced_top_r_cfgs.numel() - count_offset)
+        ) * 100
 
     return best_rank, best_regret, share_ratios
 
 
 def evaluate_cc(
-    config_representation, rank_arr, regret_arr, n_neighbors, n_recs=[1, 3, 5], query_mask=None, reference_mask=None
+    config_representation,
+    rank_arr,
+    regret_arr,
+    n_neighbors,
+    n_recs=[1, 3, 5],
+    query_mask=None,
+    reference_mask=None,
 ):
     """
     Evaluation of the configuration representations.
@@ -518,7 +554,12 @@ def evaluate_cc(
 
     n_recs is a parameter for the stability of the configuration.
     """
-    top_cfg = top_k_closest_euclidean_with_masks(config_representation, query_mask=query_mask, reference_mask=reference_mask, k=n_neighbors)
+    top_cfg = top_k_closest_euclidean_with_masks(
+        config_representation,
+        query_mask=query_mask,
+        reference_mask=reference_mask,
+        k=n_neighbors,
+    )
 
     # Foreach close config
     max_r = np.max(n_recs)
@@ -546,20 +587,52 @@ def evaluate_cc(
 
         # Look-up the regret of the recommended configs on the query input
         # Per input take the best regret and the average over all query inputs
-        mean_regret[i] = torch.tensor(
-            [regret_arr[inps, j].mean() for j, inps in enumerate(reduced_top_r_inps)]
-        ).mean()
+        mean_regret[i] = (
+            torch.tensor(
+                [
+                    regret_arr[inps, j].mean()
+                    for j, inps in enumerate(reduced_top_r_inps)
+                ]
+            ).mean()
+            * 100
+        )
 
-        mean_rank[i] = torch.tensor(
-            [rank_arr[inps, j].float().mean() for j, inps in enumerate(reduced_top_r_inps)],
-            dtype=torch.float
-        ).mean() / rank_arr.shape[0]
+        mean_rank[i] = (
+            (
+                torch.tensor(
+                    [
+                        rank_arr[inps, j].float().mean()
+                        for j, inps in enumerate(reduced_top_r_inps)
+                    ],
+                    dtype=torch.float,
+                ).mean()
+                - 1
+            )
+            / rank_arr.shape[0]
+            * 100
+        )
 
         # We must have at least r x num inputs unique elements
         count_offset = n_queries * r
-        uniq_vals = torch.tensor([torch.unique(row).numel() for row in reduced_top_r_inps])
-        share_ratios[i] = 1 - (torch.sum(uniq_vals) - count_offset) / (
-            reduced_top_r_inps.numel() - count_offset
+        uniq_vals = torch.tensor(
+            [torch.unique(row).numel() for row in reduced_top_r_inps]
         )
+        share_ratios[i] = (
+            1
+            - (torch.sum(uniq_vals) - count_offset)
+            / (reduced_top_r_inps.numel() - count_offset)
+        ) * 100
 
     return mean_rank, mean_regret, share_ratios
+
+
+def prepare_result_df(results, topr_values, topk_values, extra_info={}):
+    df = pd.DataFrame(results, columns=topr_values)
+    df["k"] = topk_values
+    df.set_index("k", inplace=True)
+    df.columns = pd.MultiIndex.from_product([["r"], df.columns])
+
+    for k, v in extra_info.items():
+        df[k] = v
+
+    return df
