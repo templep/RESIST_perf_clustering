@@ -7,6 +7,7 @@ import csv
 
 # other python script including all functions to perform clusters over a performance matrix
 import cluster
+import preprocess_for_config as prep_config
 
 
 ###load one csv file specified by its path and filename
@@ -26,7 +27,6 @@ def load_csv(path, filename, with_name=False):
 ###find files in a specific directory with a specifc extension
 ###return a list of filename
 def find_files(path, ext="csv"):
-    ext = ext
     # list all the files in the folder
     filenames = listdir(path)
     # list files that have the specified extension
@@ -52,31 +52,7 @@ def load_all_csv(path, ext="csv", with_names=False):
     return all_data, nb_config
 
 
-### deprecated use sort_data(data,idx,nb_config) instead
-### grouping data from the same configuration so that they follow in the dataframe
-def sort_data(data, nb_config):
-    ids = data.iloc[data.iloc[:, 0] == data.iloc[0, 0]]
-    sorted_data = ids
-    for i in range(1, nb_config):
-        ids = data.iloc[:, 0] == data.iloc[i, 0]
-        sorted_data = pd.concat([sorted_data, ids])
-    return sorted_data
 
-
-### because all data have been loaded by file (ie, by test case), we need to group measures from the same configuration all together
-### a configuration is a line (with associated measures) of the dataframe, the number of configuration does not change
-### parameter idx has been computed a priori and helps to know which line corresponds to which configuration (supposed to speed up the process)
-### return a new dataframe that have rearranged lines so that measures from the same configurations are in consecutive lines
-def sort_data(data, idx, nb_config):
-    # indexes of lines in data that correspond to configuration idx[0]
-    ids = [a for a, v in enumerate(idx) if v == idx[0]]
-    # store in the dataframe to be returned
-    sorted_data = data.iloc[ids]
-    # loop for all configurations
-    for i in range(1, nb_config):
-        ids = [a for a, v in enumerate(idx) if v == idx[i]]
-        sorted_data = pd.concat([sorted_data, data.iloc[ids]])
-    return sorted_data
 
 
 ### compute indexes of lines corresponding to each configurations
@@ -117,7 +93,7 @@ def save_config_clusters(output_dir, cfg_meas, idx1, idx2):
 
 ### save two indexes that are merged in a dendrogram with the computed distance between the two.
 def save_pairs_and_distance(
-    output_dir, path, ext, children, distances, linkage="average", metric="cosine", is_on_config=True
+    output_dir, path, ext, children, distances, linkage="average", metric="cosine", is_on_input=False
 ):
     # create a dataframe with all needed informations that were given in parameteres
     pd_data = pd.DataFrame(data=(children[:, 0], children[:, 1], distances))
@@ -133,7 +109,7 @@ def save_pairs_and_distance(
         + "_aff_"
         + str(metric)
         + "_level20_distance0_"
-        + "on_config" if is_on_config else "on_input"
+        + "on_input" if is_on_input else "on_config"
         +".csv"
     )
     pd_data_save.to_csv(csvfile)
@@ -144,7 +120,7 @@ def main(args):
     index_interest = args.idx_interest
     
     # will the clustering be done on the software configurations? If False, done on the input properties
-    cluster_cfg = args.is_on_config
+    input_prop = args.is_on_input
 
     # load all data in a single dataframe
     path = args.folder
@@ -155,15 +131,21 @@ def main(args):
     # compute idexes for each configuration
     idx = compute_index(perf_matrix, nb_data)
 
-    # sort the lines of the dataframe by configuration
-    data_per_cfg = sort_data(perf_matrix, idx, nb_data)
+    if(input_prop):
+        # the lines of perf_matrix are already grouped by file
+        # be aware that the loading of the files depend on the load_all_csv order
+        data_per_cfg = perf_matrix
+        
+    else:
+        # sort the lines of the dataframe by configuration
+        data_per_cfg = prep_config.sort_data(perf_matrix, idx, nb_data)
 
     # remove configuration description to keep only measurements
     measures = cluster.extract_feature(data=data_per_cfg, nb_meas=args.nb_meas)
     # print(measures.shape)
 
     # create a dimension space in which each dimension corresponds to a measure observed from a test case
-    feature_pts = cluster.create_feature_points(measures, nb_data, index_interest, cluster_cfg)
+    feature_pts = cluster.create_feature_points(measures, nb_data, index_interest, input_prop)
     # print(feature_pts)
     # apply clustering and display dendrogram
     link = args.link
@@ -185,7 +167,7 @@ def main(args):
     )
     makedirs(output_dir, exist_ok=True)
     save_pairs_and_distance(
-        output_dir, path, ext, cls.children_, cls.distances_, linkage=link, metric=metric, is_on_config=cluster_cfg
+        output_dir, path, ext, cls.children_, cls.distances_, linkage=link, metric=metric, is_on_input=input_prop
     )
 
     ###################################################################
@@ -262,8 +244,8 @@ if __name__ == "__main__":
         type=str,
     )
     parser.add_argument(
-        "--is_on_config",
-        help="if set to True, clustering will be done on software configurations; if set to False, it will be done on input properties",
+        "--is_on_input",
+        help="if set to True, clustering will be done on input properties; if set to False, it will be done on software configurations",
         action='store_true',
     )
     args = parser.parse_args()
