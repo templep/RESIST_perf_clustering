@@ -836,7 +836,7 @@ indices = np.vstack(
 scaler = StandardScaler()
 y = scaler.fit_transform(
     td[performances[0]].values.reshape(
-        -1,
+        -1,1
     )
 )
 
@@ -849,10 +849,24 @@ with torch.no_grad():
         dim=1,
     ).numpy()
 
-m = MLPRegressor(hidden_layer_sizes=(100,), verbose=True)
-m.fit(X, y)
+m = MLPRegressor(hidden_layer_sizes=(64,), verbose=True)
+m.fit(X, y.ravel())
 print("Train score", m.score(X, y))
 yp = m.predict(X)
 print("Train MAPE", mean_absolute_percentage_error(y, yp))
 
+# %%
+
+X = torch.concat(
+    (
+        train_input_arr[indices[:, 1]],
+        train_config_arr[indices[:, 0]],
+    ),
+    dim=1,
+).numpy()
+m = MLPRegressor(hidden_layer_sizes=(64,), verbose=True)
+m.fit(X, y.ravel())
+print("Train score", m.score(X, y))
+yp = m.predict(X)
+print("Train MAPE", mean_absolute_percentage_error(y, yp))
 # %%
