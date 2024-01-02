@@ -1,0 +1,45 @@
+MB-tree fixes:
+AQ was applied inconsistently, with some AQed costs compared to other non-AQed costs. Strangely enough, fixing this increases SSIM on some sources but decreases it on others. More investigation needed.
+Account for weighted bipred.
+Reduce memory, increase precision, simplify, and early terminate.
+New AQ algorithm option
+"Auto-variance" uses log(var)^2 instead of log(var) and attempts to adapt strength per-frame.
+Generates significantly better SSIM; on by default with --tune ssim.
+Whether it generates visually better quality is still up for debate.
+Available as --aq-mode 2.
+Change qpmin default to 0
+There's probably no real reason to keep it at 10 anymore, and lowering it allows AQ to pick lower quantizers in really flat areas.
+Might help on gradients at high quality levels.
+The previous value of 10 was arbitrary anyways.
+Fix bug in calculation of I-frame costs with AQ.
+New algorithm for AQ mode 2
+Combines the auto-ness of AQ2 with a new var^0.25 instead of log(var) formula.
+Works better with MB-tree than the old AQ mode 2 and should give higher SSIM.
+Fix rare corruption with subme=10
+Also fix dumb bug in VBV emergency AQ scaling.
+
+Regression in r1881.
+variance-based psy adaptive quantization
+new options: --aq-mode --aq-strength
+AQ is enabled by default
+AQ now treats perfectly flat blocks as low energy, rather than retaining previous block's QP.
+fixes occasional blocking in fades.
+allow fractional CRF values with AQ.
+use lookup tables instead of actual exp/pow for AQ
+Significant speed boost, especially on CPUs with atrociously slow floating point units (e.g. Pentium 4 saves 800 clocks per MB with this change).
+Add x264_clz function as part of the LUT system: this may be useful later.
+Note this changes output somewhat as the numbers from the lookup table are not exact.
+Fix deblocking + threads + AQ bug
+At low QPs, with threads and deblocking on, deblocking could be improperly disabled.
+Revision in which this bug was introduced is unknown; it may be as old as b_variable_qp in x264 itself.
+New AQ mode: auto-variance AQ with bias to dark scenes
+
+Also known as --aq-mode 3 or auto-variance AQ modification.
+Move adaptive quantization to before ratecontrol, eliminate qcomp bias
+This change improves VBV accuracy and improves bit distribution in CRF and 2pass.
+Instead of being applied after ratecontrol, AQ becomes part of the complexity measure that ratecontrol uses.
+This allows for modularity for changes to AQ; a new AQ algorithm can be introduced simply by introducing a new aq_mode and a corresponding if in adaptive_quant_frame.
+This also allows quantizer field smoothing, since quantizers are calculated beofrehand rather during encoding.
+Since there is no more reason for it, aq_mode 1 is removed.  The new mode 1 is in a sense a merger of the old modes 1 and 2.
+WARNING: This change redefines CRF when using AQ, so output bitrate for a given CRF may be significantly different from before this change!
+CQP is incompatible with AQ

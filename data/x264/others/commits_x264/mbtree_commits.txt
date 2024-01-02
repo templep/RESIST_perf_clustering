@@ -1,0 +1,420 @@
+MB-tree fixes:
+AQ was applied inconsistently, with some AQed costs compared to other non-AQed costs. Strangely enough, fixing this increases SSIM on some sources but decreases it on others. More investigation needed.
+Account for weighted bipred.
+Reduce memory, increase precision, simplify, and early terminate.
+Add missing free()s for new data allocated for MB-tree
+Eliminates a memory leak.
+Fix keyframe insertion with MB-tree and no B-frames
+Macroblock-tree ratecontrol
+On by default; can be turned off with --no-mbtree.
+Uses a large lookahead to track temporal propagation of data and weight quality accordingly.
+Requires a very large separate statsfile (2 bytes per macroblock) in multi-pass mode.
+Doesn't work with b-pyramid yet.
+Note that MB-tree inherently measures quality different from the standard qcomp method, so bitrates produced by CRF may change somewhat.
+This makes the "medium" preset a bit slower.  Accordingly, make "fast" slower as well, and introduce a new preset "faster" between "fast" and "veryfast".
+All presets "fast" and above will have MB-tree on.
+Add a new option, --rc-lookahead, to control the distance MB tree looks ahead to perform propagation analysis.
+Default is 40; larger values will be slower and require more memory but give more accurate results.
+This value will be used in the future to control ratecontrol lookahead (VBV).
+Add a new option, --no-psy, to disable all psy optimizations that don't improve PSNR or SSIM.
+This disables psy-RD/trellis, but also other more subtle internal psy optimizations that can't be controlled directly via external parameters.
+Quality improvement from MB-tree is about 2-70% depending on content.
+Strength of MB-tree adjustments can be tweaked using qcompress; higher values mean lower MB-tree strength.
+Note that MB-tree may perform slightly suboptimally on fades; this will be fixed by weighted prediction, which is coming soon.
+Fix possible non-determinism with mbtree + open-gop + sync-lookahead
+
+Code assumed keyframe analysis would only pull one frame off the list; this
+isn't true with open-gop.
+Improve slice header QP selection
+Use the first macroblock of each slice instead of the last of the previous.
+Lets us pick a reasonable initial QP for the first slice too.
+Slightly improved compression.
+various cleanups in macroblock caching.
+store motion data for each reference frame (but not yet used).
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@74 df754926-b1dd-0310-bc7b-ec298dee348c
+implement macroblock types B_16x8, B_8x16
+tweak thresholds for comparing B mb types
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@72 df754926-b1dd-0310-bc7b-ec298dee348c
+implement macroblock types B_SKIP, B_DIRECT, B_8x8
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@68 df754926-b1dd-0310-bc7b-ec298dee348c
+cleanup stats reporting
+report B macroblock types
+report average QP
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@66 df754926-b1dd-0310-bc7b-ec298dee348c
+Make slice-max-size more aggressive in considering escape bytes
+The x264 assumption of randomly distributed escape bytes fails in the case of CABAC + an enormous number of identical macroblocks.
+This patch attempts to compensate for this.
+It is probably safe to assume in calling applications that x264 practically never violates the slice size limitation.
+Remove an IDIV from i8x8 analysis
+Only one IDIV is left in macroblock level code (transform_rd)
+Use forced frame types in slicetype analysis
+
+This should improve MBTree and VBV when a lot of forced frame types are used.
+Fix regression in r2118
+Broke trellis with i16x16 macroblocks.
+Fix regression in r1666
+Broke encoding of PCM macroblocks.
+Lookaheadless MB-tree support
+Uses past motion information instead of future data from the lookahead.
+Not as accurate, but better than nothing in zero-latency compression when a lookahead isn't available.
+Currently resets on keyframes, so only available if intra-refresh is set, to avoid pops on non-scenecut keyframes.
+Not on by default with any preset/tune combination; must be enabled explicitly if --tune zerolatency is used.
+
+Also slightly modify encoding presets: disable rc-lookahead in the fastest presets.
+Enable MB-tree in "veryfast", albeit with a very short lookahead.
+Faster mbtree propagate and x264_log2, less memory usage
+Avoid an int->float conversion with a small table.
+Change lowres_inter_types to a bitfield; cut its size by 75%.
+Somewhat lower memory usage with lots of bframes.
+Make log2/exp2 tables global to avoid duplication.
+2-pass VBV fixes
+Properly run slicetype frame cost with 2pass + MB-tree.
+Slash the VBV rate tolerance in 2-pass mode; increasing it made sense for the highly reactive 1-pass VBV algorithm, but not for 2-pass.
+2-pass's planned frame sizes are guaranteed to be reasonable, since they are based on a real first pass, while 1-pass's, based on lookahead SATD, cannot always be trusted.
+Fix MB-tree with keyint<3
+Also slightly improve VBV keyint handling.
+Fix bug in VBV lookahead + no MB-tree
+I-frames need to have VBV lookahead run on them as well.
+Lookahead VBV
+Use the large-scale lookahead capability introduced in MB-tree for ratecontrol purposes.
+(Does not require MB-tree, however.)
+Greatly improved quality and compliance in 1-pass VBV mode, especially in CBR; +2db OPSNR or more in some cases.
+Fix some other bugs in VBV, which should improve non-lookahead mode as well.
+Change the tolerance algorithm in row VBV to allow for more significant mispredictions when buffer is nearly full.
+Note that due to the fixing of an extremely long-standing bug (>1 year), bitrates may change by nontrivial amounts in CRF without MB-tree.
+Fix bug in b-adapt 1
+B-adapt 1 didn't use more than MAX(1,bframes-1) B-frames when MB-tree was off.
+Fix 8x8dct in lossless encoding
+
+Change V and H intra prediction in lossless (TransformBypassModeFlag == 1)
+macroblocks to correctly adhere to the specification. Affects lossless
+encoding with 8x8dct or mix of lossless with normal macroblocks.
+
+8x8dct has already been disabled in lossless mode for some time due to
+being out-of-spec but this will allow us to re-enable it again.
+mbtree: Fix buffer overflow
+
+Could occur on the 1st pass in combination with --fake-interlaced and
+some input heights due to allocating a too small buffer.
+New algorithm for AQ mode 2
+Combines the auto-ness of AQ2 with a new var^0.25 instead of log(var) formula.
+Works better with MB-tree than the old AQ mode 2 and should give higher SSIM.
+Make b-pyramid normal the default
+Now that b-pyramid works with MB-tree and is spec compliant, there's no real reason not to make it default.
+Improves compression 0-5% depending on the video.
+Also allow 0/1/2 to be used as aliases for none/strict/normal (for conciseness).
+Much faster and more efficient MVD handling
+Store MV deltas as clipped absolute values.
+This means CABAC no longer has to calculate absolute values in MV context selection.
+This also lets us cut the memory spent on MVDs by a factor of 2, speeding up cache_mvd and reducing memory usage by 32*threads*(num macroblocks) bytes.
+On a Core i7 encoding 1080p, this is about 3 megabytes saved.
+Keep track of macroblock partitions
+Allows vastly simpler motion compensation and direct MV calculation.
+Faster chroma encoding
+9-12% faster chroma encode.
+Move all functions for handling chroma DC that don't have assembly versions to macroblock.c and inline them, along with a few other tweaks.
+Faster b-adapt + adaptive quantization
+Factor out pow to be only called once per macroblock.  Speeds up b-adapt, especially b-adapt 2, considerably.
+Speed boost is as high as 24% with b-adapt 2 + b-frames 16.
+Various performance optimizations
+Simplify and compact storage of direct motion vectors, faster --direct auto.
+Shrink various arrays to save a bit of cache.
+Simplify and reorganize B macroblock type writing in CABAC.
+Add some missing ALIGNED macros.
+MBAFF: Store references to the two left macroblocks
+MBAFF: Save interlace decision for all macroblocks
+Fix VFR MB-tree to work as intended
+Should improve quality with FPSs much larger or smaller than 25.
+ * encoder.c, analyse.c, macroblock: fixed when using a qp per MB.
+ (Buggy for pskip and mb with null cbp luma and chroma).
+ * dct*: fixed order of idct.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@13 df754926-b1dd-0310-bc7b-ec298dee348c
+copy current macroblock to a smaller buffer, to improve cache coherency and reduce stride computations.
+part 3: asm
+
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@445 df754926-b1dd-0310-bc7b-ec298dee348c
+copy current macroblock to a smaller buffer, to improve cache coherency and reduce stride computations.
+part 2: intra prediction
+
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@444 df754926-b1dd-0310-bc7b-ec298dee348c
+copy current macroblock to a smaller buffer, to improve cache coherency and reduce stride computations.
+part 1: memory arrangement.
+
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@443 df754926-b1dd-0310-bc7b-ec298dee348c
+Weighted P-frame prediction
+Merge Dylan's Google Summer of Code 2009 tree.
+Detect fades and use weighted prediction to improve compression and quality.
+"Blind" mode provides a small overall quality increase by using a -1 offset without doing any analysis, as described in JVT-AB033.
+"Smart", the default mode, also performs fade detection and decides weights accordingly.
+MB-tree takes into account the effects of "smart" analysis in lookahead, even further improving quality in fades.
+If psy is on, mbtree is on, interlaced is off, and weightp is off, fade detection will still be performed.
+However, it will be used to adjust quality instead of create actual weights.
+This will improve quality in fades when encoding in Baseline profile.
+
+Doesn't add support for interlaced encoding with weightp yet.
+Only adds support for luma weights, not chroma weights.
+Internal code for chroma weights is in, but there's no analysis yet.
+Baseline profile requires that weightp be off.
+All weightp modes may cause minor breakage in non-compliant decoders that take shortcuts in deblocking reference frame checks.
+"Smart" may cause serious breakage in non-compliant decoders that take shortcuts in handling of duplicate reference frames.
+
+Thanks to Google for sponsoring our most successful Summer of Code yet!
+x86: Add asm for mbtree fixed point conversion
+
+The QP offsets of each macroblock are stored as floats internally and
+converted to big-endian Q8.8 fixed point numbers when written to the 2-pass
+stats file, and converted back to floats when read from the stats file.
+
+Add SSSE3 and AVX2 implementations for conversions in both directions.
+
+About 8x faster than C on Haswell.
+Fix case in which MB-tree didn't propagate all data correctly
+Should improve quality in all cases.
+Also some minor cosmetic improvements.
+Eliminate some rare cases where MB-tree gave incorrect results in B-frames
+Also get rid of some unnecessary memcpies.
+Improve CRF initial QP selection, fix get_qscale bug
+If qcomp=1 (as in mb-tree), we don't need ABR_INIT_QP.
+get_qscale could give slightly weird results with still images
+new option: --mixed-refs
+Allows each 8x8 or 16x8 partition to independently select a reference frame, as opposed to only one ref per macroblock.
+patch mostly by Alex Wright (alexw0885 at hotmail dot com).
+
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@318 df754926-b1dd-0310-bc7b-ec298dee348c
+New "superfast" preset, much faster intra analysis
+
+Especially at the fastest settings, intra analysis was taking up the majority of MB analysis time.
+This patch takes a ton more shortcuts at the fastest encoding settings, decreasing compression 0.5-5% but improving speed greatly.
+Also rearrange the fastest presets a bit: now we have ultrafast, superfast, veryfast, faster.
+superfast is the old veryfast (but much faster due to this patch).
+veryfast is between the old veryfast and faster.
+faster is the same as before except with MB-tree on.
+
+Encoding with subme >= 5 should be unaffected by this patch.
+print average of macroblock QPs instead of frame's nominal QP
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@735 df754926-b1dd-0310-bc7b-ec298dee348c
+arm: Add asm for mbtree fixed point conversion
+
+7-8 times faster on a cortex-a53 vs. gcc-5.3.
+
+mbtree_fix8_pack_c: 44114
+mbtree_fix8_pack_neon: 5805
+mbtree_fix8_unpack_c: 38924
+mbtree_fix8_unpack_neon: 4870
+aarch64: Add asm for mbtree fixed point conversion
+
+pack is ~7 times faster and unpack is ~9 times faster on a cortex-a53
+compared to gcc-5.3.
+
+mbtree_fix8_pack_c: 41534
+mbtree_fix8_pack_neon: 5766
+mbtree_fix8_unpack_c: 44102
+mbtree_fix8_unpack_neon: 4868
+compute pskip_mv only once per macroblock, and store it
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@587 df754926-b1dd-0310-bc7b-ec298dee348c
+Make B-pyramid spec-compliant
+The rules of the specification with regard to picture buffering for pyramid coding are widely ignored.
+x264's b-pyramid implementation, despite being practically identical to that proposed by the original paper, was technically not compliant.
+Now it is.
+Two modes are now available:
+1) strict b-pyramid, while worse for compression, follows the rule mandated by Blu-ray (no P-frames can reference B-frames)
+2) normal b-pyramid, which is like the old mode except fully compliant.
+This patch also adds MMCO support (necessary for compliant pyramid in some cases).
+MB-tree still doesn't support b-pyramid (but will soon).
+Improve VBV, fix bug in 2-pass VBV introduced in MB-tree
+Bug caused AQ'd row/frame costs to not be calculated (and thus caused underflows).
+Also make VBV more aggressive with more threads in 2-pass mode.
+Finally, --ratetol now affects VBV aggressiveness (higher is less aggressive).
+Activate trellis in p8x8 qpel RD
+Also clean up macroblock.c with some refactoring
+Note that this change significantly reduces subme7+trellis2 performance, but improves quality.
+Issue originally reported by Alex_W.
+4% faster deblock: special-case macroblock edges
+Along with a bit of related code reorganization and macroification
+Add mb_info API for signalling constant macroblocks
+Some use-cases of x264 involve encoding video with large constant areas of the frame.
+Sometimes, the caller knows which areas these are, and can tell x264.
+This API lets the caller do this and adds internal tracking of modifications to macroblocks to avoid problems.
+This is really only suitable without B-frames.
+An example use-case would be using x264 for VNC.
+Fix disabling of mbtree when using 2pass encoding and zones
+Improve support for varying resolution between passes
+Should give much better quality, but still doesn't support MB-tree yet.
+Also check for the same interlaced options between passes.
+Various minor ratecontrol cosmetics.
+Slightly faster mbtree asm
+More small speed tweaks to macroblock.c
+Disable mbtree asm with cpu-independent option
+
+Results vary between versions because of different rounding results.
+Fix interlaced + extremal slice-max-size
+Broke if the first macroblock in the slice exceeded the set slice-max-size.
+Periodic intra refresh
+Uses SEI recovery points, a moving vertical "bar" of intra blocks, and motion vector restrictions to eliminate keyframes.
+Attempt to hide the visual appearance of the intra bar when --no-psy isn't set.
+Enabled with --intra-refresh.
+The refresh interval is controlled using keyint, but won't exceed the number of macroblock columns in the frame.
+Greatly benefits low-latency streaming by making it possible to achieve constant framesize without intra-only encoding.
+Combined with slice-max size for one slice per packet, tests suggest effective resiliance against packet loss as high as 25%.
+x264 is now the best free software low-latency video encoder in the world.
+
+Accordingly, change the API to add b_keyframe to the parameters present in output pictures.
+Calling applications should check this to see if a frame is seekable, not the frame type.
+
+Also make x264's motion estimation strictly abide by horizontal MV range limits in order for PIR to work.
+Also fix a major bug in sliced-threads VBV handling.
+Also change "auto" threads for sliced threads to "cores" instead of "1.5*cores" after performance testing.
+Also simplify ratecontrol's checking of first pass options.
+Also some minor tweaks to row-based VBV that should improve VBV accuracy on small frames.
+Add support for MB-tree + B-pyramid
+Modify B-adapt 2 to consider pyramid in its calculations.
+Generally results in many more B-frames being used when pyramid is on.
+Modify MB-tree statsfile reading to handle the reordering necessary.
+Make differing keyint or pyramid between passes into a fatal error.
+My last change of IDR decision broke in 2pass mode. fixed by remembering which frames are IDR.
+Disable benchmarking, as it was very slow for some people, and we already know that all the time is spent in macroblock analysis.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@94 df754926-b1dd-0310-bc7b-ec298dee348c
+CAVLC cleanup and optimizations
+Also move some small functions in macroblock.c to a .h file so they can be inlined.
+VFR-aware PSNR/SSIM measurement
+First step to VFR-aware MB-tree and bit allocation.
+Macroblock tree overhaul/optimization
+
+Move the second core part of macroblock tree into an assembly function;
+SIMD-optimize roughly half of it (for x86). Roughly ~25-65% faster mbtree,
+depending on content.
+
+Slightly change how mbtree handles the tradeoff between range and precision
+for propagation.
+
+Overall a slight (but mostly negligible) effect on SSIM and ~2% faster.
+x86: Minor mbtree_propagate_cost improvements
+
+Reduce the number of registers used from 7 to 6.
+Reduce the number of vector registers used by the AVX2 implementation from 8 to 7.
+Multiply fps_factor by 1/256 once per frame instead of once per macroblock row.
+Use mova instead of movu for dst since it's guaranteed to be aligned.
+Some cosmetics.
+OpenCL lookahead
+
+OpenCL support is compiled in by default, but must be enabled at runtime by an
+--opencl command line flag. Compiling OpenCL support requires perl. To avoid
+the perl requirement use: configure --disable-opencl.
+
+When enabled, the lookahead thread is mostly off-loaded to an OpenCL capable GPU
+device.  Lowres intra cost prediction, lowres motion search (including subpel)
+and bidir cost predictions are all done on the GPU.  MB-tree and final slice
+decisions are still done by the CPU.  Presets which do not use a threaded
+lookahead will not use OpenCL at all (superfast, ultrafast).
+
+Because of data dependencies, the GPU must use an iterative motion search which
+performs more total work than the CPU would do, so this is not work efficient
+or power efficient. But if there are spare GPU cycles to spare, it can often
+speed up the encode. Output quality when OpenCL lookahead is enabled is often
+very slightly worse in quality than the CPU quality (because of the same data
+dependencies).
+
+x264 must compile its OpenCL kernels for your device before running them, and in
+order to avoid doing this every run it caches the compiled kernel binary in a
+file named x264_lookahead.clbin (--opencl-clbin FNAME to override).  The cache
+file will be ignored if the device, driver, or OpenCL source are changed.
+
+x264 will use the first GPU device which supports the required cl_image
+features required by its kernels. Most modern discrete GPUs and all AMD
+integrated GPUs will work.  Intel integrated GPUs (up to IvyBridge) do not
+support those necessary features. Use --opencl-device N to specify a number of
+capable GPUs to skip during device detection.
+
+Switchable graphics environments (e.g. AMD Enduro) are currently not supported,
+as some have bugs in their OpenCL drivers that cause output to be silently
+incorrect.
+
+Developed by MulticoreWare with support from AMD and Telestream.
+Allow longer keyints with intra refresh
+If a long keyint is specified (longer than macroblock width-1), the refresh will simply not occur all the time.
+In other words, a refresh will take place, and then x264 will wait until keyint is over to start another refresh.
+Fix 2-pass ratecontrol continuation in case of missing statsfile
+Didn't work properly if MB-tree was enabled.
+Fix bug with various bizarre commandline combinations and mbtree
+Second pass would have mbtree on even though the first pass didn't (and thus encoding would immediately fail).
+Add missing fclose for mbtree input statsfile on second pass
+Bug report by VFRmaniac
+Faster CAVLC mb header writing for B macroblocks
+Multi-slice encoding support
+Slicing support is available through three methods (which can be mixed):
+--slices sets a number of slices per frame and ensures rectangular slices (required for Blu-ray).  Overridden by either of the following options:
+--slice-max-mbs sets a maximum number of macroblocks per slice.
+--slice-max-size sets a maximum slice size, in bytes (includes NAL overhead).
+Implement macroblock re-encoding support to allow highly accurate slice size limitation.  Might be useful for other things in the future, too.
+Fix crash with no-scenecut + mbtree
+Enhance mb_info: add mb_info_update
+This feature lets the callee know which decoded macroblocks have changed.
+MBAFF: Calculate bipred POCs
+
+Need to calculate two tables for the cases where the current macroblock is
+progressive or interlaced as refs are calculated differently for each.
+MBAFF: Use both left macroblocks for ref_idx calculation
+Fix 2 bugs with slice-max-size
+Macroblock re-encoding didn't restore mv/tex bit counters (slightly inaccurate 2-pass).
+Bitstream buffer check didn't work correctly (insanely large frames could break encoding).
+Fix stack alignment with MB-tree
+Broke 2-pass with MB-tree when calling from compilers with broken stack alignment (e.g. MSVC).
+VFR/framerate-aware ratecontrol, part 2
+MB-tree and qcomp complexity estimation now consider the duration of a frame in their calculations.
+This is very important for visual optimizations, as frames that last longer are inherently more important quality-wise.
+Improves VFR-aware PSNR as much as 1-2db on extreme test cases, ~0.5db on more ordinary VFR clips (e.g. deduped anime episodes).
+
+WARNING: This change redefines x264's internal quality measurement.
+x264 will now scale its quality based on the framerate of the video due to the aforementioned frame duration logic.
+That is, --crf X will give lower quality per frame for a 60fps video than for a 30fps one.
+This will make --crf closer to constant perceptual quality than previously.
+The "center" for this change is 25fps: that is, videos lower than 25fps will go up in quality at the same CRF and videos above will go down.
+This choice is completely arbitrary.
+
+Note that to take full advantage of this, x264 must encode your video at the correct framerate, with the correct timestamps.
+Add L1 reflist and B macroblock types to x264 info
+Also remove display of "PCM" if PCM mode is never used in the encode.
+L1 reflist information will only show if pyramid coding is used.
+Fix and enable I_PCM macroblock support
+In RD mode, always consider PCM as a macroblock mode possibility
+Fix bitstream writing for PCM blocks in CAVLC and CABAC, and a few other minor changes to make PCM work.
+PCM macroblocks improve compression at very low QPs (1-5) and in lossless mode.
+Optimizations and cosmetics in macroblock.c
+If an i4x4 dct block has no coefficients, don't bother with dequant/zigzag/idct.  Not useful for larger sizes because the odds of an empty block are much lower.
+Cosmetics in i16x16 to be more consistent with other similar functions.
+Add an SSD threshold for chroma in probe_skip to improve speed and minimize time spent on chroma skip analysis.
+Rename lambda arrays to lambda_tab for consistency.
+Move bitstream end check to macroblock level
+Additionally, instead of silently truncating the frame upon reaching the end of the buffer, reallocate a larger buffer instead.
+Convert NNZ to raster order and other optimizations
+Converting NNZ to raster order simplifies a lot of the load/store code and allows more use of write-combining.
+More use of write-combining throughout load/save code in common/macroblock.c
+GCC has aliasing issues in the case of stores to 8-bit heap-allocated arrays; dereferencing the pointer once avoids this problem and significantly increases performance.
+More manual loop unrolling and such.
+Move all packXtoY functions to macroblock.h so any function can use them.
+Add pack8to32.
+Minor optimizations to encoder/macroblock.c

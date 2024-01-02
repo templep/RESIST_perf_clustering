@@ -1,0 +1,1496 @@
+MB-tree fixes:
+AQ was applied inconsistently, with some AQed costs compared to other non-AQed costs. Strangely enough, fixing this increases SSIM on some sources but decreases it on others. More investigation needed.
+Account for weighted bipred.
+Reduce memory, increase precision, simplify, and early terminate.
+Add missing free()s for new data allocated for MB-tree
+Eliminates a memory leak.
+Fix MP4 output (bug in malloc checking patch)
+Macroblock-tree ratecontrol
+On by default; can be turned off with --no-mbtree.
+Uses a large lookahead to track temporal propagation of data and weight quality accordingly.
+Requires a very large separate statsfile (2 bytes per macroblock) in multi-pass mode.
+Doesn't work with b-pyramid yet.
+Note that MB-tree inherently measures quality different from the standard qcomp method, so bitrates produced by CRF may change somewhat.
+This makes the "medium" preset a bit slower.  Accordingly, make "fast" slower as well, and introduce a new preset "faster" between "fast" and "veryfast".
+All presets "fast" and above will have MB-tree on.
+Add a new option, --rc-lookahead, to control the distance MB tree looks ahead to perform propagation analysis.
+Default is 40; larger values will be slower and require more memory but give more accurate results.
+This value will be used in the future to control ratecontrol lookahead (VBV).
+Add a new option, --no-psy, to disable all psy optimizations that don't improve PSNR or SSIM.
+This disables psy-RD/trellis, but also other more subtle internal psy optimizations that can't be controlled directly via external parameters.
+Quality improvement from MB-tree is about 2-70% depending on content.
+Strength of MB-tree adjustments can be tweaked using qcompress; higher values mean lower MB-tree strength.
+Note that MB-tree may perform slightly suboptimally on fades; this will be fixed by weighted prediction, which is coming soon.
+15% faster refine_bidir_satd, 10% faster refine_bidir_rd (or less with trellis=2)
+re-roll a loop (saves 44KB code size, which is the cause of most of this speed gain)
+don't re-mc mvs that haven't changed
+Faster bidir_rd plus some bugfixes
+Cache chroma MC during refine_bidir_rd and use both the luma and chroma caches to skip MC in macroblock_encode.
+Fix incorrect call to rd_cost_part; refine_bidir_rd output was incorrect for i8>0.
+Remove some redundant clips.
+~12% faster refine_bidir_rd.
+Fix build on ARM with binutils >= 2.23.51.0.6
+GAS doesn't seem to like spaces in vld1 anymore, so remove those.
+Attempt to optimize PPS pic_init_qp in 2-pass mode
+Small compression improvement; up to ~0.5% in extreme cases.
+Helps more with small slice sizes (tiny resolutions or slice-max-size).
+Note that this changes the 2-pass stats file format.
+Update level dpb size calculation to match newer H.264 spec
+Doesn't actually change encoding behavior, but makes it more correct.
+Warning messages should now be accurate at higher bit depths and non-4:2:0.
+Technically, since it redefines x264_level_t, this is an API version increment.
+.gitignore: Ignore TAGS file
+Don't try to get timecodes if reading frame failed
+This fixes "input timecode file missing data for frame" warning with piped input where we don't know total number of frames.
+Fix file handle leak in libx264 on error
+Fix --tcfile-in if timecode v2 file starts from nonzero pts
+save a little bit of memory
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@64 df754926-b1dd-0310-bc7b-ec298dee348c
+cleanup spacing of frame stats with verbose logging.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@58 df754926-b1dd-0310-bc7b-ec298dee348c
+Finish support for high-depth video throughout x264
+Add support for high depth input in libx264.
+Add support for 16-bit colorspaces in the filtering system.
+Add support for input bit depths in the interval [9,16] with the raw demuxer.
+Add a depth filter to dither input to x264.
+Chroma mode decision/subpel for B-frames
+Improves compression ~0.4-1%. Helps more on videos with lots of chroma detail.
+Enabled at subme 9 (preset slower) and higher.
+Make slice-max-size more aggressive in considering escape bytes
+The x264 assumption of randomly distributed escape bytes fails in the case of CABAC + an enormous number of identical macroblocks.
+This patch attempts to compensate for this.
+It is probably safe to assume in calling applications that x264 practically never violates the slice size limitation.
+Add --disable-gpl option to configure
+Used for commercially-licensed versions of x264.
+Doesn't currently change anything, but may be used to disable GPL-only CLI tools, such as video filters, in the future.
+Also print the x264 license and libavformat license in version info.
+Update source file headers
+Update dates, improve file descriptions, make things more consistent.
+Also add information about commercial licensing.
+update x264_hpel_filter_altivec's prototype to match the one of the C version.
+It changed in commit 045ae4045a1827555b3eaab4fbf3c9809e98c58f (factorization of mallocs)
+(NB: Altivec implementation wasn't allocating and writing to any scratch memory.)
+Fix regression in r1066
+With some combinations of video width and other settings, the scratch buffer was slightly too small.
+This caused heap corruption on some systems.
+Also prevent merange from being raised during encoding with esa/tesa through encoder_reconfig, as this no longer works.
+factor mallocs out of hpel, ssim, and esa.
+there should now be no memory allocation outside of init-time.
+Update to the current lavf API and fix memory leak when using --seek
+arm: do not use aligned stores in mc_weight_w4_*neon
+
+mc_weight_w4_*neon is also used for width 2 which does not guarantee
+4-byte aligned destination. Fixes crashes caused by random memory
+corruption.
+checkasm: add memory clobber to read_time inline asm
+
+The memory acts as compiler barrier preventing aggressive reordering
+of read_time calls. gcc 4.8 reorders some of initial read_time calls
+after the second when targeting arm.
+Fix crash if timecode file opening fails
+Inline i4x4/i8x8 encode into intra analysis
+Larger code size, but faster.
+Allow setting a chroma format at compile time
+Gives a slight speed increase and significant binary size reduction when only one chroma format is needed.
+Fix infinite loop parsing TDecimate Mode 3 timecode v1 files
+Fine-tune of frame's size predictors at ratecontrol start
+
+This is attempt to improve VBV at start of video with a lot of threads which
+delay feedback for predictors.
+dump_yuv: Fix file handle leak
+mp4: Fix file handle leak
+flv: Fix memory and file handle leaks
+avs: Fix file handle leak
+matroska: Fix memory leak
+slurp_file: Various minor bug fixes
+
+ * Fix unsigned <= 0 check.
+ * Add additional size sanity check on 32-bit systems.
+ * Don't read uninitialized data if fread() fails.
+param_parse: Fix memory leak
+Fix bug in reference frame autoadjustment
+For some types of input file, x264 did the adjustment before width/height were known.
+Faster MV prediction
+Smaller code size, plus I get to use goto.
+Save some memory on mv cost arrays
+Have quantizers that use the same lambda share the same cost array.
+CABAC trellis optimizations: use SIMD quant
+Significant speed increase, minor change in output due to rounding.
+YUV range detection and support for x264CLI
+Two new options: --input-range and --range.
+--input-range forces the range of the input in case of misdetection; auto by default.
+-- range sets the range of the output; x264cli will convert if necessary, TV by default.
+--fullrange is now removed as a CLI option (but the libx264 API is unchanged).
+x86inc: AVX symmetry optimization
+3-arg AVX ops with a memory arg can only have it in src2,
+whereas SSE emulation of 3-arg prefers to have it in src1 (i.e. the move).
+So, if the op is symmetric and the wrong one is memory, swap them.
+Eliminates redundant moves in some cases when using 3-operand without AVX with memory arguments.
+Also fix movss and movsd in some cases, and flag shufps correctly as float.
+Add video filtering system to x264cli
+Similar to mplayer's -vf system.
+Supports some basic operations like resizing and cropping.  Will support more in the future.
+See the help for more details.
+Support for 9 and 10-bit encoding
+Output bit depth is specified on compilation time via --bit-depth.
+There is currently almost no assembly code available for high-bit-depth modes, so encoding will be very slow.
+Input is still 8-bit only; this will change in the future.
+
+Note that very few H.264 decoders support >8 bit depth currently.
+Also note that the quantizer scale differs for higher bit depth.  For example, for 10-bit, the quantizer (and crf) ranges from 0 to 63 instead of 0 to 51.
+Support infinite keyint (--keyint infinite).
+This just means x264 won't insert non-scenecut keyframes.
+Useful for streaming when using interactive error recovery or some other mechanism that makes keyframes unnecessary.
+
+Also change POC logic to limit POC/framenum LSB size (to save bits per slice).
+Also fix a bug in the CPB underflow detection code (didn't affect the bitstream, just resulted in the failure to print certain warning messages).
+Centralize logging within x264cli
+x264cli messages will now respect the log level they pertain to.
+Slightly reduces binary size.
+Callback feature for low-latency per-slice output
+Add a callback to allow the calling application to send slices immediately after being encoded.
+Also add some extra information to the x264_nal_t structure to help inform such a calling application how the NAL units should be ordered.
+
+Full documentation is in x264.h.
+Interactive encoder control: error resilience
+In low-latency streaming with few clients, it is often feasible to modify encoder behavior in some fashion based on feedback from clients.
+One possible application of this is error resilience: if a packet is lost, mark the associated frame (and any referenced from it) as lost.
+This allows quick recovery from errors with minimal expense bit-wise.
+
+The new i_dpb_size parameter allows a calling application to tell x264 to use a larger DPB size than required by the number of reference frames.
+This lets x264 and the client keep a large buffer of old references to fall back to in case of lost frames.
+If no recovery is possible even with the available buffer, x264 will force a keyframe.
+
+This initial version does not support B-frames or intra refresh.
+Recommended usage is to set keyint to a very large value, so that keyframes do not occur except as necessary for extreme error recovery.
+
+Full documentation is in x264.h.
+
+Move DTS/PTS calculation to before encoding each frame instead of after.
+Improve documentation of x264_encoder_intra_refresh.
+Improve 2-pass bitrate prediction
+Adapt based on distance to the end in bits, not in frames.
+Helps in videos with absurdly simple end sections, e.g. black frames.
+Improve HRD accuracy
+In a staggering display of brain damage, the spec requires all HRD math to be done in infinite precision despite the output being of quite limited precision.
+Accordingly, convert buffer management to work in units of timescale.
+These accumulating rounding errors probably didn't cause any real problems, but might in theory cause issues in very picky muxers on extremely long-running streams.
+Fix SIGPIPEs caused by is_regular_file checks
+Check to see if input file is a pipe without opening it.
+Allocate space for null terminator in param_apply_tune
+cli: large file support
+
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@399 df754926-b1dd-0310-bc7b-ec298dee348c
+mkv: increase nalu size size to 4 bytes.
+patch by Haali.
+
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@396 df754926-b1dd-0310-bc7b-ec298dee348c
+Faster mbtree propagate and x264_log2, less memory usage
+Avoid an int->float conversion with a small table.
+Change lowres_inter_types to a bitfield; cut its size by 75%.
+Somewhat lower memory usage with lots of bframes.
+Make log2/exp2 tables global to avoid duplication.
+2-pass VBV fixes
+Properly run slicetype frame cost with 2pass + MB-tree.
+Slash the VBV rate tolerance in 2-pass mode; increasing it made sense for the highly reactive 1-pass VBV algorithm, but not for 2-pass.
+2-pass's planned frame sizes are guaranteed to be reasonable, since they are based on a real first pass, while 1-pass's, based on lookahead SATD, cannot always be trusted.
+GSOC merge part 2: ARM stack alignment
+Neither GCC nor ARMCC support 16 byte stack alignment despite the fact that NEON loads require it.
+These macros only work for arrays, but fortunately that covers almost all instances of stack alignment in x264.
+Cut size of MVD arrays by a factor of 2 again
+Only store the MVDs of the edges of each MB.
+
+Thanks to Michael Niedermayer for the idea.
+Use short startcodes whenever possible
+Saves one byte per frame for every slice beyond the first.
+Only applies to Annex-B output mode.
+Make b-pyramid normal the default
+Now that b-pyramid works with MB-tree and is spec compliant, there's no real reason not to make it default.
+Improves compression 0-5% depending on the video.
+Also allow 0/1/2 to be used as aliases for none/strict/normal (for conciseness).
+Much faster and more efficient MVD handling
+Store MV deltas as clipped absolute values.
+This means CABAC no longer has to calculate absolute values in MV context selection.
+This also lets us cut the memory spent on MVDs by a factor of 2, speeding up cache_mvd and reducing memory usage by 32*threads*(num macroblocks) bytes.
+On a Core i7 encoding 1080p, this is about 3 megabytes saved.
+stats summary: separately report all 5 partition sizes, and add ref usages
+
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@310 df754926-b1dd-0310-bc7b-ec298dee348c
+MP4 output: update to GPAC 0.4 API.
+patch mostly by Robert Swain.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@299 df754926-b1dd-0310-bc7b-ec298dee348c
+ xyuv: bug fixes + autodetect of video size.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@283 df754926-b1dd-0310-bc7b-ec298dee348c
+Fix MSVC compilation and clean up MSVC build file
+Remove Release64 which never worked anyways.
+Change some macros to be more sensitive to memory alignment, thus avoiding
+useless loads/stores and calculations of permutation vectors.
+Affected functions are all of mc_luma, mc_chroma, 'get_ref', SATD, SA8D and deblock.
+Gains globally vary from ~5% - 15% on a depending on settings running on a 1.42 ghz G4.
+Fix minor memory leak in r1022
+Fix stat with large file support
+Hardcode the bs_t in cavlc.c; passing it around is a waste
+
+Saves ~1.5kb of code size, very slight speed boost.
+Merge nnz_backup with scratch buffer
+Slightly less memory usage.
+Simplfy intra mode availability handling
+Slightly faster, 1.5kb smaller binary size, less code.
+Add "coded blocks" stat to output information.
+This measures the total percentage of blocks, intra and inter, which have nonzero coefficients.
+"y,uvAC,uvDC" refers to luma, chroma DC, and chroma AC blocks.
+Note that skip blocks are included in this stat.
+Various CABAC optimizations
+Move calculation of b_intra out of the core residual loop and hardcode it where applicable.
+Inlining cabac_mb_mvd was unnecessary and wasted tremendous amounts of code size.  Inlining only cache_mvd is faster and significantly smaller.
+Use float constants in qp rounding
+Slight performance improvement and fixes slight difference in output between gcc 3.4 and 4.5.
+ * encoder: simpler scene cut detection (seems better but do not check
+size anymore, so need more testing).
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@20 df754926-b1dd-0310-bc7b-ec298dee348c
+ * all: Change the way PSNR is computed (based on a patch by Loren
+Merritt <lorenmn AT u DOT washington DOT edu>
+ Using SQE(DeltaSourceReconstructed) = Sum( delta^2 )
+       PSNR( SQE, Size ) = -10Ln(SQE / 255^2 / Size )/Ln(10) )
+       Y+U+V : Union of YUV planes.
+
+ Now there is 
+  - Mean PSNR : Sum( PSNR( SQE(Y/U/V), Size(Y/U/V) ) / TotalFrames
+  - Average PSNR: Sum( PSNR( SQE(Y+U+V), Size(Y+U+V) ) ) / TotalFrames
+  - Global PSNR: PSNR( Sum( SQE(Y+U+V) ), Size(Y+U+V)*TotalFrames )
+
+  Mean PSNR is used by the JM, and Average/Overall is used on Doom9 for
+example.
+
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@19 df754926-b1dd-0310-bc7b-ec298dee348c
+asm cosmetics part 2
+These changes were split out of the cpuflags commit because they change the output executable.
+Timecode parsing: Add missing initialization
+Fix crash when failed to parse timecode file before malloc pts.
+Fix detection of user timebase considered to be exceeding H.264 maximum.
+Linux x264_cpu_num_processors(): use glibc macros
+The cpu_set_t structure is considered opaque.
+Also handle sched_getaffinity() error case if "cpusetsize is smaller than the size of the affinity mask used by the kernel."
+  * configure: activate minor nasm optimisations, such as assembling
+    "add eax, 8" as "add eax, byte 8".
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@450 df754926-b1dd-0310-bc7b-ec298dee348c
+copy current macroblock to a smaller buffer, to improve cache coherency and reduce stride computations.
+part 1: memory arrangement.
+
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@443 df754926-b1dd-0310-bc7b-ec298dee348c
+Fix bugs/typos in motion compensation and cache_load
+
+Didn't affect output due to the incorrect values either not being used in the
+code path or producing equal results compared to the correct values.
+
+Also deduplicate hpel_ref arrays.
+Significantly faster qpel-RD
+Cache the results of MC, like in bidir-RD.
+Slightly changes output due to the necessary reordering of satd/RD calls.
+5-10% faster qpel-RD.
+10L in r1353
+Broke mp4 output.
+Enhanced Avisynth input support
+Requires avisynth_c.h from the Avisynth API headers.
+Reports errors properly from Avisynth script input.
+Automatically construct input scripts for almost any input file.
+Tries ffmpegsource2, DSS2, directshowsource, and many other sourcing methods, based on the input file extension.
+Automatically converts to YV12.
+x86: Add asm for mbtree fixed point conversion
+
+The QP offsets of each macroblock are stored as floats internally and
+converted to big-endian Q8.8 fixed point numbers when written to the 2-pass
+stats file, and converted back to floats when read from the stats file.
+
+Add SSSE3 and AVX2 implementations for conversions in both directions.
+
+About 8x faster than C on Haswell.
+windows: Flag debug builds in the resource file
+cli: Refactor filter option parsing
+
+The old code contained a whole bunch of memory leaks, unchecked mallocs,
+sections of dead code, etc. and was generally overly complex.
+
+Also consolidate some memory allocations into a single one.
+ffms: Various improvements
+
+ * Drop the MinGW Unicode workarounds. Those were required at the time
+   Windows Unicode support was added to x264 but the underlying problem
+   has since been fixed in FFMS.
+
+ * Use FFMS_IndexBelongsToFile() as an additional sanity check when reading
+   an index file to ensure that it belongs to the current source video.
+
+ * Upgrade to the new API to prevent deprecation warnings when compiling.
+
+ * Fix a resource leak that would occur if FFMS_GetFirstTrackOfType() or
+   FFMS_CreateVideoSource() failed.
+
+ * Minor string handling adjustments related to progress reporting.
+
+This increases the FFMS version requirement from 2.16.2 to 2.21.0.
+parse_zones: Fix memory leak
+Fix issues relating to input/output files being pipes/FIFOs
+Fix large file support, broken in r1302
+Dramatically reduce size of pixel_ssd_* asm functions
+~10k of code size eliminated.
+Further reduce code size in bime
+~7-8 kilobytes saved, ~0.6% faster subme 9.
+Motion compensation optimizations
+Turning off inlining saves a whole boatload of code size for near-zero speed cost.
+Simplify offset calculation.
+Various other optimizations.
+Fix a typo in b-pyramid help
+And an errant space in common/macroblock.c
+split muxers.c into one file per format
+simplify internal muxer API
+Correctly mark output frames as BREF
+Simplify pic_out code.
+Pad non-mod16 resolutions using the correct field
+
+Improves compression of interlaced videos with non-mod16 heights.
+x86inc: Fix call with memory operands
+
+We overload the `call` instruction with a macro, but it would misbehave when
+the macro argument wasn't a valid identifier. Fix it by explicitly checking
+if the argument is an identifier.
+Recursively delete conftest files
+
+On OS X, one of the conftest files might be a directory named `conftest.dSYM`.
+mc: Mark a function only used within the file as static
+cli: Verify that yuv/y4m input has at least one frame of data
+
+Prevents a SIGBUS crash caused by attempting to access a memory-mapped
+region beyond the end of the input file.
+x86util: Reduce code size of high bit-depth AVX LOAD_DIFF
+
+AVX supports unaligned memory operands which makes the SATD code a bit denser.
+change the meaning of --ref: it now selects DPB size (including B-frames), rather than L0 size (which B-frames are added to)
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@721 df754926-b1dd-0310-bc7b-ec298dee348c
+slightly wrong memory allocation in r717, fixes a potential crash with merange>32
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@718 df754926-b1dd-0310-bc7b-ec298dee348c
+Fix stupid bug in B-frame VBV size prediction
+Trim a few bytes off some x86 intra pred functions
+x86: Move predict_16x16_dc_left calculations to asm
+
+1-2 cycles faster and avoids some code duplication to decrease code size.
+
+Also drop the MMX2 implementation in favor of SSE2 to simplify things.
+cli: Prefetch yuv/y4m input frames on Windows 8 and newer
+
+Use PrefetchVirtualMemory() (if available) on memory-mapped input frames.
+
+Significantly improves performance when the source file is not already
+present in the OS page cache by asking the OS to bring in those pages from
+disk using large, concurrent I/O requests.
+
+Most beneficial on fast encoding settings. Up to 40% faster overall with
+--preset ultrafast, and up to 20% faster overall with --preset veryfast.
+
+This API was introduced in Windows 8, so call it conditionally. On older
+Windows systems the previous behavior remains unchanged.
+configure: Fix clang detection with versioned binaries
+
+Correctly detect clang binaries that has the version number appended
+as a suffix to the file name, e.g. `clang38`.
+Fix memory leak on encoder close if not all frames are flushed
+Fix malloc of zero size
+Caused x264 to fail with some settings on systems that return a NULL pointer for malloc(0), like Solaris.
+Output pic struct information in libx264 API
+Fix possible division by zero in mkv and flv muxers on close
+This could crash if anything failed before output.set_param (for example, incorrect params refused by x264_encoder_open).
+Bug introduced in r1873.
+Double the base framerate for frame-sequential 3D files
+A 60fps frame-sequential 3D file is really only 30 FPS, just alternating between eyes.
+Accordingly, ratecontrol should treat it as if it was really 30 FPS.
+This will increase the bitrate at the same CRF level for such videos when --frame-packing 5 is used.
+Use integer math for filler size calculation
+Remove inline asm syntax not supported by LLVM's assembler
+Doesn't affect compiled output outside of LLVM.
+Improve slice-max-size handling of escape bytes
+More accurate but a bit slower.  Helps deal with a few obnoxious corner cases where the current algorithm failed.
+Exempt Win x86_64 from memalign hack
+The API mandates all mallocs are 16 byte aligned.
+Remove unused int that stores sizeof malloc in memalign hack.
+Cleaner allocation of tmp space in halfpel interpolation; fixes some valgrind/nasm warnings.
+patch by Mathieu Monnier.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@220 df754926-b1dd-0310-bc7b-ec298dee348c
+Updated MSVC project files.
+thanks to Bonzi.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@218 df754926-b1dd-0310-bc7b-ec298dee348c
+cosmetics.
+silence some gcc warnings.
+amd64 doesn't need a separate copy of the c/h files, only the asm.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@217 df754926-b1dd-0310-bc7b-ec298dee348c
+10l (214 wrote wrong DPB size in SPS -> B-pyramid broke)
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@216 df754926-b1dd-0310-bc7b-ec298dee348c
+CLI (mp4): return to 'capture' output mode, remove useless SetCtsPackMode() (fixed in gpac).
+Note: requires gpac cvs-20050419 or later.
+patch by bobo.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@215 df754926-b1dd-0310-bc7b-ec298dee348c
+ [mp4] ftyp & moov boxes at the begining of the file, (thanks to jeanlf
+ for comments)
+
+ patch by bobololo
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@206 df754926-b1dd-0310-bc7b-ec298dee348c
+CLI: require output file (don't default to stdout). warn if trying to use mp4 or avis when not supported. misc cleanup.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@200 df754926-b1dd-0310-bc7b-ec298dee348c
+strip local symbols from asm .o files, since they confuse oprofile
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@574 df754926-b1dd-0310-bc7b-ec298dee348c
+reduce the size of some cabac arrays
+rearrange cabac struct to reduce code size
+checkasm: Check the right output range for integral_initXh
+
+These functions write their output into sum+stride, while we previously
+only checked [0..stride-8] within the sum array.
+
+This catches the previously broken aarch64 version of these functions.
+
+Also check up until stride-4 elements for init4h.
+Reduce memory usage of b-adapt 2 trellis
+Also fix a minor bug where the algorithm ignored the last frame in the trellis.
+Add missing free for nal_buffer
+Fixes a memory leak.
+rm msvc project files and related ifdefs
+Reorder reference frames optimally on second pass
+About +0.1-0.2% compression at normal bitrates, up to +1% at very low bitrates.
+Only works if the first pass uses the same number of refs as the second (i.e. not with fast first pass).
+Thus, only worthwhile at insanely slow speeds: as such, enable slow-firstpass by default with preset placebo.
+Note that this changes the stats file format!
+Add support for single-frame VBV, improve compliance
+This allows both constant-framesize and capped-framesize encoding.
+Literal constant framesize isn't actually supported yet due to the lack of
+filler support.
+Example with 30fps video: --vbv-bufsize 200 --vbv-maxrate 6000 will ensure that
+no frame is ever larger than 200 kilobits.
+
+One example use-case of this is for zero-delay streaming where bandwidth costs
+need to be minimized.  If every frame is smaller than 200 kilobits and the
+client has a 6 megabit connection, every single frame can be instantly sent
+to the client and handled without any decoder-side buffer.
+
+Fix a mistake in VBV calculation--this may have caused the VBV to be slightly
+non-compliant in some situations without x264 realizing it.
+Add primitive prediction handling for rows with quantizers lower than their
+reference.  This slightly improves VBV in CBR mode.
+Various other minor improvements to VBV, mostly to make single-frame VBV work.
+
+Commit sponsored by a media streaming company that wishes to remain anonymous.
+mmx cachesplit sad of non-square sizes checked height instead of width
+Add mb_info API for signalling constant macroblocks
+Some use-cases of x264 involve encoding video with large constant areas of the frame.
+Sometimes, the caller knows which areas these are, and can tell x264.
+This API lets the caller do this and adds internal tracking of modifications to macroblocks to avoid problems.
+This is really only suitable without B-frames.
+An example use-case would be using x264 for VNC.
+ICL: fix out of tree building and resource file usage on Windows
+Fix invalid memory accesses in x86 lowres_init when width <= 16
+Add missing space to parameter SEI
+Fix memory leak in lavf demuxer.
+Leak only occurred with input files that have more than one video stream.
+Add frame-packing SEI support for signalling 3D video
+Save more memory with weightp in >8-bit
+.gitignore more untracked file types
+x86: Shrink the x86-64 cabac coeff_last tables
+
+Use dword instead of qword entries. Cuts the size of the tables in half
+which allows each table fit inside a single cache line.
+
+When PIC is disabled dwords are enough to store absolute addresses.
+
+When PIC is enabled we can store dword offsets relative to the start of
+the table and simply add the address of the table to the offset in order
+to calculate the full address. This approach also have the advantage of
+eliminating a whole bunch of run-time .data relocations.
+analyse: Reduce the size the cost_mv arrays
+
+Use a dynamic size depending on the MV range. Reduces memory consumption by
+up to a few megabytes.
+
+Drop a related old miscompilation check since it may otherwise cause an
+out-of-bounds memory access.
+
+Also remove an unused extern variable declaration.
+fix some integer overflows. now vbv size can exceed 2 Gbit.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@675 df754926-b1dd-0310-bc7b-ec298dee348c
+Fix 10L in r1612
+Stats need to be calculated before deblock strength, not after.
+Broke ref stats in x264cli (no affect on actual output).
+Fix different output with differing sync-lookahead
+Also reduce memory consumption.
+Modify version.sh to output to stdout.
+Update configure to match.
+Set correct filesystem permissions for various files
+Reduce memory usage in 2-pass with b-adapt 2
+Overhaul CABAC: faster, less cache usage
+Horribly munge up the CABAC tables to allow deduplication of some data.
+Saves 256 bytes of L1d cache in non-RD, 512 bytes in RD.
+Add asm versions of bypass and terminal; save L1i cache by re-using putbyte code.
+Further optimize encode_decision.
+All 3 primary CABAC functions fit in under 256 bytes of code total on x86_64.
+explicit write combining, because gcc fails at optimizing consecutive memory accesses
+  * Use -maltivec when building dependencies, or <altivec.h> cannot be used.
+  * Do not declare vectors in non-AltiVec files.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@630 df754926-b1dd-0310-bc7b-ec298dee348c
+don't assume int is exactly 4 bytes
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@619 df754926-b1dd-0310-bc7b-ec298dee348c
+Add Altivec implementations of add8x8_idct8, add16x16_idct8, sa8d_8x8 and sa8d_16x16
+Note: doesn't take advantage of some possible aligned memory accesses, so there's still room for improvement
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@604 df754926-b1dd-0310-bc7b-ec298dee348c
+faster ESA init
+reduce memory if using ESA and not p4x4
+use lookup tables instead of actual exp/pow for AQ
+Significant speed boost, especially on CPUs with atrociously slow floating point units (e.g. Pentium 4 saves 800 clocks per MB with this change).
+Add x264_clz function as part of the LUT system: this may be useful later.
+Note this changes output somewhat as the numbers from the lookup table are not exact.
+Much faster CAVLC residual coding
+Use a VLC table for common levelcodes instead of constructing them on-the-spot
+Branchless version of i_trailing calculation (2x faster on Nehalem)
+Completely remove array_non_zero_count and instead use the count calculated in level/run coding.  Note: this slightly changes output with subme > 7 due to different nonzero counts being stored during qpel RD.
+s/nasm/yasm in VS project file
+Cosmetic: update various file headers.
+Significantly faster CABAC and CAVLC residual coding and bit cost calculation
+Early-terminate in residual writing using stored nnz counts
+To allow the above, store nnz counts for luma and chroma DC
+Add assembly functions to find the last nonzero coefficient in a block
+Overall ~1.9% faster at subme9+8x8dct+qp25 with CAVLC, ~0.7% faster with CABAC
+Note this changes output slightly with CABAC RDO because it requires always storing correct nnz values during RDO, which wasn't done before in cases it wasn't useful.
+CAVLC output should be equivalent.
+fix an overflow in dct4x4dc_mmx
+(unlikely to have occurred in any real video)
+Set psy=0 in lossless mode
+Doesn't actually affect output, just what's written in the SEI.
+Add faster mv0 special case for macroblock-tree
+Improves performance on low-motion video.
+Add miscompilation check for x264_clz
+Running a Phenom-optimized build of x264 (e.g. -march=amdfam10) on a non-Phenom CPU didn't SIGILL; instead it would silently produce incorrect output.
+Now, instead, it will error out loudly.
+x86: port SSE2+ SATD functions to high bit depth
+
+Makes SATD 20-50% faster across all partition sizes but 4x4.
+x86: Use SSE instead of SSE2 for copying data
+
+Reduces code size because movaps/movups is one byte shorter than movdqa/movdqu.
+Also merge MMX and SSE versions of memcpy_aligned into a single macro.
+64-bit cabac optimizations
+
+~4% faster PIC
+
+WIN64:
+~3% faster and 16 byte shorter cabac_encode_bypass
+~8% faster cabac_encode_terminal
+Benchmarked on Ivy Bridge
+
+UNIX64:
+One instruction less in cabac_encode_bypass
+Eliminate extra layer of indirection for sps/pps references
+Also remove poc type 1 support (it didn't work anyways) to reduce sps size.
+Avoid possible NaNs in B-frame output stats
+checkasm: aarch64: Add filler args to make sure all parameters are passed on the stack
+
+This, combined with clobbering the stack space prior to the call,
+increases the chances of finding cases where 32 bit parameters
+are erroneously treated as 64 bit.
+x86inc: Avoid using eax/rax for storing the stack pointer
+
+When allocating stack space with an alignment requirement that is larger
+than the current stack alignment we need to store a copy of the original
+stack pointer in order to be able to restore it later.
+
+If we chose to use another register for this purpose we should not pick
+eax/rax since it can be overwritten as a return value.
+checkasm: arm/aarch64: Fix the amount of space reserved for stack parameters
+
+Even if MAX_ARGS - 2 (for arm) or MAX_ARGS - 6 (for aarch64) parameters
+are passed on the stack to checkasm_checked_call, we actually only
+need to store MAX_ARGS - 4 (for arm) or MAX_ARGS - 8 (for aarch64)
+parameters on the stack when calling the tested function.
+checkasm: arm: preserve the stack alignment in x264_checkasm_checked_call
+
+The stack used by x264_checkasm_checked_call_neon was a multiple of 4
+when the checked function is called. AAPCS requires a double word (8 byte)
+aligned stack public interfaces. Since both calls are public interfaces
+the stack is misaligned when the checked is called.
+
+This can cause issues if code called within this (which includes
+the C implementations) relies on the stack alignment.
+ppc: Fix hadamard for little-endian
+
+Extending to 16-bit works with flipped bytes.
+Add "--stitchable" option for segmented encoding
+
+Stops x264 from attempting to optimize global stream headers, ensuring that
+different segments of a video will have identical headers when used with
+identical encoding settings.
+x86: 32-byte align the stack if possible
+
+Avoids the need for manual 32 byte array alignment on compilers that support
+-mpreferred-stack-boundary.
+x86inc: Utilize the shadow space on 64-bit Windows
+
+Store XMM6 and XMM7 in the shadow space in functions that clobbers them.
+This way we don't have to adjust the stack pointer as often,
+reducing the number of instructions as well as code size.
+Change %ifdef directives to %if directives in *.asm files
+This allows combining multiple conditionals in a single statement.
+Add Windows resource file
+Displays version info in Windows Explorer.
+ARM: align asm functions to 4 bytes.
+Some linkers apparently fail to correctly align ARM functions when mixing with Thumb code.
+CABAC trellis opts part 1: minor change in output
+Due to different tie-break order.
+More correct padding constants for lowres planes
+Since lowres analysis isn't interlace-aware, we don't need to double the vertical padding for interlaced video.
+Periodic intra refresh
+Uses SEI recovery points, a moving vertical "bar" of intra blocks, and motion vector restrictions to eliminate keyframes.
+Attempt to hide the visual appearance of the intra bar when --no-psy isn't set.
+Enabled with --intra-refresh.
+The refresh interval is controlled using keyint, but won't exceed the number of macroblock columns in the frame.
+Greatly benefits low-latency streaming by making it possible to achieve constant framesize without intra-only encoding.
+Combined with slice-max size for one slice per packet, tests suggest effective resiliance against packet loss as high as 25%.
+x264 is now the best free software low-latency video encoder in the world.
+
+Accordingly, change the API to add b_keyframe to the parameters present in output pictures.
+Calling applications should check this to see if a frame is seekable, not the frame type.
+
+Also make x264's motion estimation strictly abide by horizontal MV range limits in order for PIR to work.
+Also fix a major bug in sliced-threads VBV handling.
+Also change "auto" threads for sliced threads to "cores" instead of "1.5*cores" after performance testing.
+Also simplify ratecontrol's checking of first pass options.
+Also some minor tweaks to row-based VBV that should improve VBV accuracy on small frames.
+LAVF/FFMS input support, native VFR timestamp handling
+libx264 now takes three new API parameters.
+b_vfr_input tells x264 whether or not the input is VFR, and is 1 by default.
+i_timebase_num and i_timebase_den pass the timebase to x264.
+
+x264_picture_t now returns the DTS of each frame: the calling app need not calculate it anymore.
+
+Add libavformat and FFMS2 input support: requires libav* and ffms2 libraries respectively.
+FFMS2 is _STRONGLY_ preferred over libavformat: we encourage all distributions to compile with FFMS2 support if at all possible.
+FFMS2 can be found at http://code.google.com/p/ffmpegsource/.
+--index, a new x264cli option, allows the user to store (or load) an FFMS2 index file for future use, to avoid re-indexing in the future.
+
+Overhaul the muxers to pass through timestamps instead of assuming CFR.
+Also overhaul muxers to correctly use b_annexb and b_repeat_headers to simplify the code.
+Remove VFW input support, since it's now pretty much redundant with native AVS support and LAVF support.
+Finally, overhaul a large part of the x264cli internals.
+
+--force-cfr, a new x264cli option, allows the user to force the old method of timestamp handling.  May be useful in case of a source with broken timestamps.
+Avisynth, YUV, and Y4M input are all still CFR.  LAVF or FFMS2 must be used for VFR support.
+
+Do note that this patch does *not* add VFR ratecontrol yet.
+Support for telecined input is also somewhat dubious at the moment.
+
+Large parts of this patch by Mike Gurlitz <mike.gurlitz@gmail.com>, Steven Walters <kemuri9@gmail.com>, and Yusuke Nakamura <muken.the.vfrmaniac@gmail.com>.
+Fix two bugs in 2-pass ratecontrol
+last_qscale_for wasn't set during the 2pass init code.
+abr_buffer was way too small in the case of multiple threads, so accordingly increase its buffer size based on the number of threads.
+May significantly increase quality with many threads in 2-pass mode, especially in cases with extremely large I-frames, such as anime.
+VfW: expose option "Nth pass" (i.e. simultaneously read and update the multipass stats file).
+Patch by Riccardo Stievano.
+
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@105 df754926-b1dd-0310-bc7b-ec298dee348c
+finish subpixel motion refinement for B-frames (up to 6% reduced size of B-frames at subq <= 3)
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@103 df754926-b1dd-0310-bc7b-ec298dee348c
+From Riccardo Stievano <walkunafraid at tin dot it>:
+
+here's a patch that fixes the VfW frontend after the changes made in 
+revision 93 (GOP size management). Default values for i_keyint_max 
+and i_keyint_min have been set to 250 and 10, respectively.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@95 df754926-b1dd-0310-bc7b-ec298dee348c
+Changes the mechanics of max keyframe interval:
+Now enforces min and max GOP sizes, and allows variable numbers of
+non-IDR I-frames within a GOP.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@93 df754926-b1dd-0310-bc7b-ec298dee348c
+remove Makefile.cygwin because build/cygwin/Makefile is more up to date.
+put correct object file names in .depend
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@82 df754926-b1dd-0310-bc7b-ec298dee348c
+Don't force row QPs to integer values with VBV
+VBV should no longer raise the bitrate of the video.  That is, at a given quality level or average bitrate, turning on VBV should only lower the bitrate.
+This isn't quite true if adaptive quant is off, but nobody should be doing that anyways.
+Also may result in slightly more accurate per-row VBV ratecontrol.
+Deduplicate asm constants, automate name prefixing
+Auto-prefix global constants with x264_ in cextern.
+Eliminate x264_ prefix from asm files; automate it in cglobal.
+Deduplicate asm constants wherever possible to save data cache (move them to a new const-a.asm).
+Remove x264_emms() entirely on non-x86 (don't even call an empty function).
+Add cextern_naked for a non-prefixed cextern (used in checkasm).
+Reduce lookahead memory usage, cache misses
+Merge lowres_types with lowres_costs.
+Move deblocking code to a separate file
+Should clean up frame.c a bit.
+Fix minor memory leak accidentally added with the addition of b-adapt 2
+checkasm: Fix incorrect memcmp size for ARM architecture
+matroska: Correctly write display width and height in stereo mode
+
+According to the specifications, when stereo mode is set, these values
+represent the single view size.
+Fix negative percentages in final stats output
+
+They were caused by integer overflow when encoding long UHD video.
+checkasm: add cycle counter read for aarch64
+
+Needs kernel support since user space access to the cycle counter is not
+allowed on all available AArch64 systems (Android 5 and iOS).
+avoid memory loads that span the border between two cachelines.
+on core2 this makes x264_pixel_sad an average of 2x faster. other intel cpus gain various amounts. amd are unaffected.
+overall speedup: 1-10%, depending on how much time is spent in fullpel motion estimation.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@696 df754926-b1dd-0310-bc7b-ec298dee348c
+Cache motion vectors in lowres lookahead
+This vastly speeds up b-adapt 2, especially at large bframes values.
+This changes output because now MV prediction in lookahead only uses L0/L1 MVs, not bidir.  This isn't a problem, since the bidir prediction wasn't really correct to begin with, so the change in output is neither positive nor negative.
+This also allowed the removal of some unnecessary memsets, which should also give a small speed boost.
+Finally, this allows the use of the lowres motion vectors for predictors in some future patch.
+Add optional more optimal B-frame decision method
+This method (--b-adapt 2) uses a Viterbi algorithm somewhat similar to that used in trellis quantization.
+Note that it is not fully optimized and is very slow with large --bframes values.
+It also takes into account weightb, which should improve fade detection.
+Additionally, changes were made to cache lowres intra results for each frame to avoid recalculating them.  This should improve performance in both B-frame decision methods.
+This can also be done for motion vectors, which will dramatically improve b-adapt 2 performance when it is complete.
+This patch also reads b_adapt and scenecut settings from the first pass so that the x264 header information in the output file will have correct information (since frametype decision is only done on the first pass).
+Move adaptive quantization to before ratecontrol, eliminate qcomp bias
+This change improves VBV accuracy and improves bit distribution in CRF and 2pass.
+Instead of being applied after ratecontrol, AQ becomes part of the complexity measure that ratecontrol uses.
+This allows for modularity for changes to AQ; a new AQ algorithm can be introduced simply by introducing a new aq_mode and a corresponding if in adaptive_quant_frame.
+This also allows quantizer field smoothing, since quantizers are calculated beofrehand rather during encoding.
+Since there is no more reason for it, aq_mode 1 is removed.  The new mode 1 is in a sense a merger of the old modes 1 and 2.
+WARNING: This change redefines CRF when using AQ, so output bitrate for a given CRF may be significantly different from before this change!
+Add title-bar progress indicator under WIN32
+Also add bitrate-so-far output when piping data to x264 (total frames not known)
+Patch mostly by recover from Doom9.
+CAVLC cleanup and optimizations
+Also move some small functions in macroblock.c to a .h file so they can be inlined.
+cli: Use memory-mapped input frames for yuv and y4m
+
+Improves performance by avoiding extraneous memory copying.
+Most beneficial on fast settings.
+
+On average around 5-10% faster overall on ultrafast but the
+performance improvement can be even larger in some cases.
+y4m: Support extended frame headers when seeking
+
+Use the actual length of the frame header of the first frame instead of
+assuming a header without extensions when calculating the frame size.
+
+Also makes the frame counter more accurate with extended frame headers.
+x86inc: Add debug symbols indicating sizes of compiled functions
+
+Some debuggers/profilers use this metadata to determine which function a
+given instruction is in; without it they get can confused by local labels
+(if you haven't stripped those). On the other hand, some tools are still
+confused even with this metadata. e.g. this fixes `gdb`, but not `perf`.
+
+Currently only implemented for ELF.
+x86inc: Preserve arguments when allocating stack space
+
+When allocating stack space with a larger alignment than the known stack
+alignment a temporary register is used for storing the stack pointer.
+Ensure that this isn't one of the registers used for passing arguments.
+x86inc: Improve FMA instruction handling
+
+ * Correctly handle FMA instructions with memory operands.
+ * Print a warning if FMA instructions are used without the correct cpuflag.
+ * Simplify the instantiation code.
+ * Clarify documentation.
+
+Only the last operand in FMA3 instructions can be a memory operand. When
+converting FMA4 instructions to FMA3 instructions we can utilize the fact
+that multiply is a commutative operation and reorder operands if necessary
+to ensure that a memory operand is used only as the last operand.
+encoder_open: Fix memory leak
+
+Furthermore, the x264_analyse_prepare_costs() and x264_analyse_init_costs()
+functions were only used in x264_encoder_open(), so move that entire section
+of code to analyse.c as well to simplify things.
+CLI option: --visualize
+Displays the encoded video along with MB types and motion vectors.
+patch by Tuukka Toivonen.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@227 df754926-b1dd-0310-bc7b-ec298dee348c
+Chroma weighted prediction
+Like luma weighted prediction, dramatically improves compression in fades.
+Up to 4-8db chroma PSNR gain in extreme cases (short, perfect fade-outs).
+On actual videos, helps up to ~1% overall.
+One example video with a decent number of fades (ef OP): 0.8% bitrate reduction overall, 7% bitrate reduction just counting chroma.
+Fixes a lot of artifacts in fades at lower bitrates.
+
+Original patch by Dylan Yudaken <dyudaken@gmail.com>.
+Improve flash detection algorithm change in r1765
+Now only disables scenecuts only near real end of video, not just prior to forced keyframes.
+Save a bit of memory with weightp + high bit depth
+Improve flash detection's behavior near the end of the video
+Flash detection catches situations like AAAABBCCDDDD, where A,B,C,D are frames in different scenes.
+x264 would place a keyframe on the first "D".
+However, if the video ended on the last "C", x264 would place a keyframe on the first "C", even though C classifies as a flash.
+This change fixes this issue.
+x86inc: Support arbitrary stack alignments
+
+If the stack is known to be at least 32-byte aligned we can safely store ymm
+registers on the stack without doing manual alignment.
+
+Change ALLOC_STACK to always align the stack before allocating stack space for
+consistency. Previously alignment would occur either before or after allocating
+stack space depending on whether manual alignment was required or not.
+Overhaul macroblock_cache_rect
+Unify the rectangle functions into a single one similar to ffmpeg's fill_rectangle.
+Remove all cases of variable-size cache_rect calls; create a function-pointer-based system for handling such cases.
+Should greatly decrease code size required for such calls.
+Add support for spaces to iPhone GAS preprocessor script
+"CRF-max" support with VBV
+This is a rather curious feature that may have more use than is initially obvious.
+In CRF mode with VBV enabled, CRF-max allows the user to specify a quality level which the encoder will never go below, even due to the effects of VBV.
+This is not the same as qpmax, which is not aware of issues like scene complexity.
+Setting this WILL cause VBV underflows in any situation where the encoder would have needed to exceed the relevant CRF to avoid underflow.
+
+Why might one want to do this even if it would cause VBV underflows?
+In the case of streaming, particularly ultra-low-latency streaming, it may be preferable to drop frames than to display frames that are of too low a quality.
+Thus, in extremely complex scenes, rather than display completely awful video, the streaming server could simply drop to a lower framerate.
+Scenecuts, which normally look terrible under situations like single-frame VBV, could be handled by just displaying them a bit later and dropping frames to compensate.
+In other words, it's better to see the scenecut 150ms delayed than for it to look like a blocky mess for 150ms.
+
+On the caller-side, this would be handled by detecting the output size of x264's frames and dropping future frames to compensate if necessary.
+
+This can also be used in normal encoding simply to ensure that VBV does not hurt quality too much (at the cost of potentially causing underflows).
+This can help quite a lot when using single-frame VBV and sliced threads, where VBV can often be somewhat unstable.
+Blu-ray support: NAL-HRD, VFR ratecontrol, filler, pulldown
+x264 can now generate Blu-ray-compliant streams for authoring Blu-ray Discs!
+Compliance tested using Sony BD-ROM Verifier 1.21.
+Thanks to The Criterion Collection for sponsoring compliance testing!
+
+An example command, using constant quality mode, for 1080p24 content:
+x264 --crf 16 --preset veryslow --tune film --weightp 0 --bframes 3 --nal-hrd vbr --vbv-maxrate 40000 --vbv-bufsize 30000 --level 4.1 --keyint 24 --b-pyramid strict --slices 4 --aud --colorprim "bt709" --transfer "bt709" --colormatrix "bt709" --sar 1:1 <input> -o <output>
+
+This command is much more complicated than usual due to the very complicated restrictions the Blu-ray spec has.
+Most options after "tune" are required by the spec.
+--weightp 0 is not, but there are known bugged Blu-ray player chipsets (Mediatek, notably) that will decode video with --weightp 1 or 2 incorrectly.
+Furthermore, note the Blu-ray spec has very strict limitations on allowed resolution/fps combinations.
+Examples include 1080p @ 24000/1001fps (NTSC FILM) and 720p @ 60000/1001fps.
+
+Detailed features introduced in this patch:
+
+Full NAL-HRD compliance, with both VBR (no filler) and CBR (filler) modes.
+Can be enabled with --nal-hrd vbr/cbr.
+libx264 now returns HRD timing information to the caller in the form of an x264_hrd_t.
+x264cli doesn't currently use it, but this information is critical for compliant TS muxing.
+
+Full VFR ratecontrol support: VBV, 1-pass ABR, and 2-pass modes.
+This means that, even without knowing the average framerate, x264 can achieve a correct bitrate in target bitrate modes.
+Note that this changes the statsfile format; first pass encodes make before this patch will have to be re-run.
+
+Pulldown support: libx264 allows the calling application to specify a pulldown mode for each frame.
+This is similar to the way that RFFs (Repeat Field Flags) work in MPEG-2.
+Note that libx264 does not modify timestamps: it assumes the calling application has set timestamps correctly for pulldown!
+x264cli contains an example implementation of caller-side pulldown code.
+
+Pic_struct support: necessary for pulldown and allows interlaced signalling.
+Also signal TFF vs BFF with delta_poc_bottom: should significantly improve interlaced compression.
+--tff and --bff should be preferred to the old --interlaced in order to tell x264 what field order to use.
+
+Huge thanks to Alex Giladi and Lamont Alston for their work on code that eventually became part of this patch.
+Timecode input/output
+--tcfile-in allows a user to specify a timecode v1 or v2 file to override input timestamps.
+Useful for dealing with VFR input, especially when FFMS/LAVF support isn't available.
+--tcfile-out writes a timecode v2 file containing the timecodes of the output file.
+New --timebase option allows a user to change the stream timebase.
+Intended primarily for forcing timebase with timecode files if necessary.
+When using --seek, note that x264 will seek in the timecode file as well.
+Ignore XYSCSS in y4m if the newer standard C tag is present
+
+Apparently y4mscaler will generate 4:2:0 files with XYSCSS set to 444
+Fix regression in r1450
+I_PCM blocks would cause x264 to crash or generate bad output. Simplify PCM handling.
+x86: AVX2 high bit-depth pixel_sad
+
+Also use loops instead of duplicating code; reduces code size by ~10kB with
+negligible effect on performance.
+x86: AVX high bit-depth predict_16x16_v
+
+Also restructure some code to reduce code size of various functions,
+especially in high bit-depth.
+x86inc: create xm# and ym#, analagous to m#
+
+For when we want to mix simd sizes within one function.
+OpenCL lookahead
+
+OpenCL support is compiled in by default, but must be enabled at runtime by an
+--opencl command line flag. Compiling OpenCL support requires perl. To avoid
+the perl requirement use: configure --disable-opencl.
+
+When enabled, the lookahead thread is mostly off-loaded to an OpenCL capable GPU
+device.  Lowres intra cost prediction, lowres motion search (including subpel)
+and bidir cost predictions are all done on the GPU.  MB-tree and final slice
+decisions are still done by the CPU.  Presets which do not use a threaded
+lookahead will not use OpenCL at all (superfast, ultrafast).
+
+Because of data dependencies, the GPU must use an iterative motion search which
+performs more total work than the CPU would do, so this is not work efficient
+or power efficient. But if there are spare GPU cycles to spare, it can often
+speed up the encode. Output quality when OpenCL lookahead is enabled is often
+very slightly worse in quality than the CPU quality (because of the same data
+dependencies).
+
+x264 must compile its OpenCL kernels for your device before running them, and in
+order to avoid doing this every run it caches the compiled kernel binary in a
+file named x264_lookahead.clbin (--opencl-clbin FNAME to override).  The cache
+file will be ignored if the device, driver, or OpenCL source are changed.
+
+x264 will use the first GPU device which supports the required cl_image
+features required by its kernels. Most modern discrete GPUs and all AMD
+integrated GPUs will work.  Intel integrated GPUs (up to IvyBridge) do not
+support those necessary features. Use --opencl-device N to specify a number of
+capable GPUs to skip during device detection.
+
+Switchable graphics environments (e.g. AMD Enduro) are currently not supported,
+as some have bugs in their OpenCL drivers that cause output to be silently
+incorrect.
+
+Developed by MulticoreWare with support from AMD and Telestream.
+Slightly faster 8x16 SAD on Penryn Core 2
+Same as MMX 8x16 cacheline SAD, but calls SSE2 8x16 SAD in non-cacheline case.
+Only Nehalem benefits from sizes smaller than 8x16, and Nehalem doesn't use cacheline functions, so no smaller versions are included.
+Fix scenecut and VBV with videos of width/height <= 32
+Also remove an unused variable
+Show FPS when importing a raw YUV file
+Promote chroma planes to 16 byte alignment.
+This will allow simplifying vectors loads that can only load 16-bytes
+aligned data (such as AltiVec).
+Massive overhaul of nnz/cbp calculation
+Modify quantization to also calculate array_non_zero.
+PPC assembly changes by gpoirior.
+New quant asm includes some small tweaks to quant and SSE4 versions using ptest for the array_non_zero.
+Use this new feature of quant to merge nnz/cbp calculation directly with encoding and avoid many unnecessary calls to dequant/zigzag/decimate/etc.
+Also add new i16x16 DC-only iDCT with asm.
+Since intra encoding now directly calculates nnz, skip_intra now backs up nnz/cbp as well.
+Output should be equivalent except when using p4x4+RDO because of a subtlety involving old nnz values lying around.
+Performance increase in macroblock_encode: ~18% with dct-decimate, 30% without at CRF 25.
+Overall performance increase 0-6% depending on encoding settings.
+ analyse: "It correct the size of array i_mb_b16x8_cost_table
+   from 16 to 17,otherwise,it can result a mismatch of b16x8
+   mb type cost and can result memory read overflow on it." Patch by lurui.
+ 
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@278 df754926-b1dd-0310-bc7b-ec298dee348c
+example quant matrix file
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@270 df754926-b1dd-0310-bc7b-ec298dee348c
+adjust coded buffer size based on input resolution and QP (old default wasn't enough for HD lossless)
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@268 df754926-b1dd-0310-bc7b-ec298dee348c
+Make the ABR buffer consider the distance to the end of the video
+Should improve bitrate accuracy in 2-pass mode.
+May also slightly improve quality by allowing more variation earlier-on in a file.
+
+Also fix abr_buffer with 1-pass: it does something very different than what it does for 2-pass.
+Thus, the earlier change that increased it based on threads caused 1-pass ABR to be somewhat less accurate.
+mkv: Write the x264 version into the file header
+
+This only updates the "writing application"; matroska_ebml.c is the
+"muxing application", but the version string for that is still hardcoded.
+Backport various speed tweak ideas from ffmpeg
+Add mv0 early termination to spatial direct calculation
+Up to twice as fast direct mv calculation on near-motionless video.
+
+Branchless CAVLC level code adjustment based on trailing ones.
+A few clocks faster.
+
+Check tc value before clipping in C version of deblock functions.
+Much faster, but nobody uses those anyways.
+
+Thanks to Michael Niedermayer for the ideas.
+Overhaul sliced-threads VBV
+Make predictors thread-local and allow each thread to poll the others to get their predicted sizes.
+Many, many other tweaks to improve quality with small VBV and sliced threads.
+Note this may somewhat increase the risk of a VBV underflow in such extreme situations (single-frame VBV).
+This is tolerable, as most relevant use-cases are better off with a few rare underflows (even if they have to drop a slice) than consistent low quality.
+Add ability to adjust ratecontrol parameters on the fly
+encoder_reconfig and x264_picture_t->param can now be used to change ratecontrol parameters.
+This is extraordinarily useful in certain streaming situations where the encoder needs to adapt the bitrate to network circumstances.
+
+What can be changed:
+1) CRF can be adjusted if in CRF mode.
+2) VBV maxrate and bufsize can be adjusted if in VBV mode.
+3) Bitrate can be adjusted if in CBR mode.
+However, x264 cannot switch between modes and cannot change bitrate in ABR mode.
+
+Also fix a bug where x264_picture_t->param reconfig method would not always be frame-exact.
+
+Commit sponsored by SayMama video calling.
+Add intra prediction modes to output stats
+Also eliminate some NANs in stat output with intra-only encoding.
+Marginal speedup: disable stat calculation if log level is below X264_LOG_INFO.
+Various minor cosmetics.
+Overhaul syntax in muxers.c/matroska.c
+The inconsistent syntax in these files has finally come to an end.
+Major API change: encapsulate NALs within libx264
+libx264 now returns NAL units instead of raw data.  x264_nal_encode is no longer a public function.
+See x264.h for full documentation of changes.
+New parameter: b_annexb, on by default.  If disabled, startcodes are replaced by sizes as in mp4.
+x264's VBV now works on a NAL level, taking into account escape codes.
+VBV will also take into account the bit cost of SPS/PPS, but only if b_repeat_headers is set.
+Add an overhead tracking system to VBV to better predict the constant overhead of frames (headers, NALU overhead, etc).
+Improve progress indicator behavior
+Progress indicator will now indicate based on output frame, not input frame.
+Make MV costs global instead of static
+Fixes some extremely rare threading race conditions and makes the code cleaner.
+Downside: slightly higher memory usage when calling multiple encoders from the same application.
+Threaded lookahead
+Move lookahead into a separate thread, set to higher priority than the other threads, for optimal performance.
+Reduces the amount that lookahead bottlenecks encoding, greatly increasing performance with lookahead-intensive settings (e.g. b-adapt 2) on many-core CPUs.
+Buffer size can be controlled with --sync-lookahead, which defaults to auto (threads+bframes buffer size).
+Note that this buffer is separate from the rc-lookahead value.
+Note also that this does not split lookahead itself into multiple threads yet; this may be added in the future.
+Additionally, split frames into "fdec" and "fenc" frame types and keep the two separate.
+This split greatly reduces memory usage, which helps compensate for the larger lookahead size.
+Extremely special thanks to Michael Kazmier and Alex Giladi of Avail Media, the original authors of this patch.
+Multi-slice encoding support
+Slicing support is available through three methods (which can be mixed):
+--slices sets a number of slices per frame and ensures rectangular slices (required for Blu-ray).  Overridden by either of the following options:
+--slice-max-mbs sets a maximum number of macroblocks per slice.
+--slice-max-size sets a maximum slice size, in bytes (includes NAL overhead).
+Implement macroblock re-encoding support to allow highly accurate slice size limitation.  Might be useful for other things in the future, too.
+Write 3D metadata when outputting Matroska
+
+For when --frame-packing is set.
+mbaff: fix mb_field_decoding_flag tracking and simplify allow skip check
+
+Fixes an issue with too many forced non-skips in mbaff+cavlc, as well as
+non-deterministic output with mbaff+cavlc+sliced-threads.
+Fix memory overwrite in x264_deblock_h_chroma_mbaff_sse2
+
+Fixes possible corruption with MBAFF+sliced threads.
+Fix checkasm --bench output when nop_cycles is too large
+Avoid some unneccesary memory loads in macroblock_encode
+Bump dates to 2014
+
+Also update AUTHORS file and my e-mail address in the headers of various files.
+Fix uninitialized variable
+
+Caused if the timebase is not specified in stats file. Found by Clang.
+x86inc: only define program_name if the macro is unset.
+This allows overriding the value from outside the file.
+This can be useful if x86inc.asm is used outside of x264.
+Free user supplied data when deleting a frame
+This eliminates a memory leak when calling x264_encoder_close.
+Faster predictor checking with subme<3
+Fix a typo that made an early-skip less effective.
+Avoid a relatively unpredictable branch.
+Slightly changed output due to the typo-fix.
+~50 cycles faster on Core i7.
+Support changing resolutions between passes with macroblock-tree
+Implement a basic separable bilinear filter to rescale the quantizer offsets.
+Structure inspired by swscale, but floating-point instead of fixed-point.
+Not as optimized as it could be, but it's quite fast already.
+
+Example compression penalties on a 720p video game recording:
+First pass with 720p and second as 480p: ~-1.5% (vs. same res)
+First pass with 480p and second as 720p: ~-3% (vs. same res)
+Cap ratecontrol predictor parameters
+Limits VBV mispredictions after long periods of relatively constant video.
+x86inc: import patches from libav
+Allow manual invocation of WIN64_SPILL_XMM even under INIT_MMX
+SSE version of mova is movaps rather than movdqa.
+YMM version of movnta.
+Add mp size for named arguments.
+Fix DEFINE_ARGS when used outside of a cglobal.
+Define a few more cpuflags.
+3-argument wrappers for a few more instructions.
+aarch64: fix x264_mbtree_propagate_cost_neon
+
+The branch conditon caused the loop to execute one time more than
+intended. Detected by a memory corruption on arm with the 1 to 1 port of
+the function.
+aarch64: Fix integral_init4/8h_neon
+
+The stride is the number of uint16_t elements and thus needs
+to be shifted.
+
+This issue had slipped unnoticed since checkasm didn't actually
+verify the output of these functions.
+x86: Enable SSE2 by default on x86-32
+
+It makes more sense to tune the defaults to benefit the vast majority of users.
+
+Anyone still using a Pentium III for video encoding is of course free to
+explicitly set different flags when compiling.
+cygwin: Enable MSVS support
+
+`cl -showIncludes` creates absolute Windows paths for some files, attempt
+to convert those to Unix paths.
+
+Use relative paths for dependencies located in or below the working directory
+in order to mimic the behavior of gcc and to make the paths more readable.
+
+Make the dependency generation script a bit more robust in general.
+update msvc project files.
+patch by anonymous.
+
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@504 df754926-b1dd-0310-bc7b-ec298dee348c
+Add checkasm tests for memcpy_aligned, memzero_aligned
+Also make memcpy_aligned support sizes smaller than 64.
+Workaround bug in fps/timestamp handling with lavf input
+reordered_opaque in lavf doesn't work correctly in the identity case (no reordering).
+Fixes incorrect output for some file types (e.g. raw in mov).
+Fix another PCM bug
+CABAC assumes that NNZ is 0 or 1, not the number of actual nonzero coefficients.
+Didn't actually break the output; only had a tiny effect on RD.
+reduce the size of some arrays
+Two improvements to regression test script
+Use SHA-1 hashes for temporary file names to avoid exceeding OS filename length limits.
+Correctly return to the original branch after testing if you were on a branch.
+Fix cacheline check in avg2 w20 cache32
+Didn't result in incorrect output, only slightly decreased speed on a few obsolete systems.
+VFR/framerate-aware ratecontrol, part 2
+MB-tree and qcomp complexity estimation now consider the duration of a frame in their calculations.
+This is very important for visual optimizations, as frames that last longer are inherently more important quality-wise.
+Improves VFR-aware PSNR as much as 1-2db on extreme test cases, ~0.5db on more ordinary VFR clips (e.g. deduped anime episodes).
+
+WARNING: This change redefines x264's internal quality measurement.
+x264 will now scale its quality based on the framerate of the video due to the aforementioned frame duration logic.
+That is, --crf X will give lower quality per frame for a 60fps video than for a 30fps one.
+This will make --crf closer to constant perceptual quality than previously.
+The "center" for this change is 25fps: that is, videos lower than 25fps will go up in quality at the same CRF and videos above will go down.
+This choice is completely arbitrary.
+
+Note that to take full advantage of this, x264 must encode your video at the correct framerate, with the correct timestamps.
+Improve reference ordering in interleaved 3D video
+ Provides a decent compression improvement when encoding interleaved 3D content (--frame-packing 5).
+ Helps more without B-frames and at lower bitrates.
+ Note that x264 will not do this optimization unless --frame-packing 5 is used to tell x264 that the source is interleaved 3D.
+
+Tests consistently show that interleaved frame packing is by far the best way to compress 3D content.
+It gives a ~35-50% compression benefit over separate streams or top/bottom or left/right coding.
+
+Also finally add support for L1 reference reordering (in B-frames).
+Also add support for reordered ref0 in L0 and L1 lists; could be useful in the future for other things.
+Improved 2pass bitrate predictor. No real change most of the time, but allows correct ratecontrol on some pathological videos that used to diverge completely. Also improves prediction when 2nd pass bitrate is very different from 1st pass.
+The new qscale2bits() has no simple inverse, so I also had to change rc_eq to output qscale instead of bits.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@129 df754926-b1dd-0310-bc7b-ec298dee348c
+Some defines needed by MSVC, and convert the DSP files to DOS-style newlines.
+Patch by Radek Czyz.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@128 df754926-b1dd-0310-bc7b-ec298dee348c
+In N-pass mode if stat_in and stat_out are the same file, instead save to a temp file and overwrite stat_in only when the encode finishes.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@122 df754926-b1dd-0310-bc7b-ec298dee348c
+VfW: use separate stats files for each pass of an N-pass encode.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@117 df754926-b1dd-0310-bc7b-ec298dee348c
+  * Additional fixes to the PIC versions of assembly routines. They now pass
+    all checkasm tests and output streams are bit-by-bit identical, which
+    sounds good.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@422 df754926-b1dd-0310-bc7b-ec298dee348c
+ Quick compile fix for OS X / Intel
+ Optimizations are disabled at the moment. In order to get them to
+ work, we'd need either nasm to be able to output Mach-O object files,
+ or we should convert the assembly code to something OS X can handle,
+ like gas.
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@400 df754926-b1dd-0310-bc7b-ec298dee348c
+Faster temporal predictor calculation
+Split into a separate commit because this changes rounding, and thus changes output slightly.
+Relax QPfile restrictions
+Allow a QPfile to contain fewer frames than the total number of frames in the video and have ratecontrol fill in the rest.
+Patch by kemuri9.
+Fix memory leak upon x264 closing
+Doesn't affect the CLI, but potentially important for programs which call x264 as a shared library.
+Various optimizations and cosmetics
+Update AUTHORS file with Gabriel and me
+update XCHG macro to work correctly in if statements
+Add new lookup tables for block_idx and fdec/fenc addresses
+Slightly faster array_non_zero_count_mmx (patch by holger)
+Eliminate branch in analyse_intra
+Unroll loops in and clean up chroma encode
+Convert some for loops to do/while loops for speed improvement
+Do explicit write-combining on --me tesa mvsad_t struct
+Shrink --me esa zero[] array
+Speed up bime by reducing size of visited[][][] array
+Update file headers throughout x264
+Update "Authors" lists based on actual authorship; highest is most important
+Update copyright notices and remove old CVS tags from file headers
+Add file headers to GTK and other sections missing them
+Update FSF address
+Other header-related cosmetics
+Optimizations and cosmetics in macroblock.c
+If an i4x4 dct block has no coefficients, don't bother with dequant/zigzag/idct.  Not useful for larger sizes because the odds of an empty block are much lower.
+Cosmetics in i16x16 to be more consistent with other similar functions.
+Add an SSD threshold for chroma in probe_skip to improve speed and minimize time spent on chroma skip analysis.
+Rename lambda arrays to lambda_tab for consistency.
+configure: include dependency libs in the Libs pkg-config
+
+If only a static library is built, the user of the library that just
+tries to link to the lib using the flags provided by pkg-config
+might not know that only a static lib exists and that he'd have to
+pass --static to pkg-config to get the internal dependencies to
+be able to link the library.
+
+For a shared build, the internal dependencies are kept in Libs.private
+as before.
+
+This matches how libav's pkg-config files are generated.
+Workaround for FFMS indexing bug
+
+If FFMS_ReadIndex is used with an empty index file it gets stuck in an infinite loop instead of returning NULL
+like it's supposed to do on failure. Explicitly check if the file is empty before calling it as a workaround.
+AVC-Intra support
+
+This format has been reverse engineered and x264's output has almost exactly
+the same bitstream as Panasonic cameras and encoders produce. It therefore does
+not comply with SMPTE RP2027 since Panasonic themselves do not comply with
+their own specification. It has been tested in Avid, Premiere, Edius and
+Quantel.
+
+Parts of this patch were written by Fiona Glaser and some reverse
+engineering was done by Joseph Artsimovich.
+Transparent hugepage support
+
+Combine frame and mb data mallocs into a single large malloc.
+Additionally, on Linux systems with hugepage support, ask for hugepages on
+large mallocs.
+
+This gives a small performance improvement (~0.2-0.9%) on systems without
+hugepage support, as well as a small memory footprint reduction.
+
+On recent Linux kernels with hugepage support enabled (set to madvise or
+always), it improves performance up to 4% at the cost of about 7-12% more
+memory usage on typical settings..
+
+It may help even more on Haswell and other recent CPUs with improved 2MB page
+support in hardware.
+x86: Remove X264_CPU_SSE_MISALIGN functions
+
+Prevents a crash if the misaligned exception mask bit is cleared for some reason.
+
+Misaligned SSE functions are only used on AMD Phenom CPUs and the benefit is miniscule.
+They also require modifying the MXCSR control register and by removing those functions
+we can get rid of that complexity altogether.
+
+VEX-encoded instructions also supports unaligned memory operands. I tried adding AVX
+implementations of all removed functions but there were no performance improvements on
+Ivy Bridge. pixel_sad_x3 and pixel_sad_x4 had significant code size reductions though
+so I kept them and added some minor cosmetics fixes and tweaks.
+x86: AVX-512 support
+
+AVX-512 consists of a plethora of different extensions, but in order to keep
+things a bit more manageable we group together the following extensions
+under a single baseline cpu flag which should cover SKL-X and future CPUs:
+ * AVX-512 Foundation (F)
+ * AVX-512 Conflict Detection Instructions (CD)
+ * AVX-512 Byte and Word Instructions (BW)
+ * AVX-512 Doubleword and Quadword Instructions (DQ)
+ * AVX-512 Vector Length Extensions (VL)
+
+On x86-64 AVX-512 provides 16 additional vector registers, prefer using
+those over existing ones since it allows us to avoid using `vzeroupper`
+unless more than 16 vector registers are required. They also happen to
+be volatile on Windows which means that we don't need to save and restore
+existing xmm register contents unless more than 22 vector registers are
+required.
+
+Also take the opportunity to drop X264_CPU_CMOV and X264_CPU_SLOW_CTZ while
+we're breaking API by messing with the cpu flags since they weren't really
+used for anything.
+
+Big thanks to Intel for their support.
+arm: Explicitly declare using the .text segment in the function macro
+
+This fixes one issue in building with MS armasm via gas-preprocessor.
+Without the .text segment specification, the object files assembled
+fine, but linking failed. (armasm source files don't get the text/code
+segment implied automatically if nothing is specified.)
+Windows: Add support for MSVC compilation with WSL
+
+In Windows 10 version 1703 (Creators Update) WSL supports calling native
+Windows binaries from the Bash shell, but it requires using full file
+names including extension, e.g. `cl.exe` instead of `cl`.
+
+We also don't have access to `cygpath`, so use a simple regex for
+converting the dependencies to Unix paths that `make` can understand.
+x86inc: Prefer r14/r15 over r12/r13 on x86-64
+
+Due to a peculiarity in the ModR/M addressing encoding, the r12 and r13
+registers sometimes requires an additional byte when used as a base register.
+
+r14 and r15 doesn't have that issue, so prefer using them.
+GTK update. patch by Vincent Torri.
+  added:
+direct=auto
+no-fast-pskip
+vbv
+cqm
+tooltips (without descriptions yet)
+translations
+`make clean` for .exe
+when file exists, ask for override
+  fixes:
+debug level bug 
+bitrate slider bug
+mixed-refs can be set only if ref>1
+i8x8 can be set only if 8x8 transform is enabled
+# of threads capped at 4
+fourcc can't be removed
+cosmetics
+
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@532 df754926-b1dd-0310-bc7b-ec298dee348c
+fix a memory alignment. (no effect on x86, but might be needed for other simd)
+
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@526 df754926-b1dd-0310-bc7b-ec298dee348c
+input: Add a workaround for swscale overread bugs
+
+swscale can read past the end of the input buffer, which may result in
+crashes if such a read crosses a page boundary into an invalid page.
+
+Work around this by adding some padding space at the end of the buffer when
+using memory-mapped input frames. This may sometimes require copying the
+last frame into a new buffer on Windows since the Microsoft memory-mapping
+implementation has very limited capabilities compared to POSIX systems.
+Shrink the i4x4_mode cost_table array
+
+Only 17 elements are actually used. It was originally padded to 64 bytes to
+avoid cache line splits in the x86 assembly, but those haven't really been
+an issue on x86 CPU:s made in the past decade or so.
+
+Benchmarking shows no performance impact from dropping the padding, so
+might as well remove it and save some cache.
+Make ref and i4x4_mode costs global instead of static
+
+Fixes some thread safety doubts and makes code cleaner.
+Downside: slightly higher memory usage when calling multiple encoders from the same application.
+flv: Fix one frame video total duration
+Unify 8-bit and 10-bit CLI and libraries
+
+Add 'i_bitdepth' to x264_param_t with the corresponding '--output-depth' CLI
+option to set the bit depth at runtime.
+
+Drop the 'x264_bit_depth' global variable. Rather than hardcoding it to an
+incorrect value, it's preferable to induce a linking failure. If applications
+relies on this symbol this will make it more obvious where the problem is.
+
+Add Makefile rules that compiles modules with different bit depths. Assembly
+on x86 is prefixed with the 'private_prefix' define, while all other archs
+modify their function prefix internally.
+
+Templatize the main C library, x86/x86_64 assembly, ARM assembly, AARCH64
+assembly, PowerPC assembly, and MIPS assembly.
+
+The depth and cache CLI filters heavily depend on bit depth size, so they
+need to be duplicated for each value. This means having to rename these
+filters, and adjust the callers to use the right version.
+
+Unfortunately the threaded input CLI module inherits a common.h dependency
+(input/frame -> common/threadpool -> common/frame -> common/common) which
+is extremely complicated to address in a sensible way. Instead duplicate
+the module and select the appropriate one at run time.
+
+Each bitdepth needs different checkasm compilation rules, so split the main
+checkasm target into two executables.
+Change default QP parameters initialization
+
+qp is modified to require a valid value before use, while qp_max is set
+to maximum allowable value (and clipped later on).
+
+This is needed so that param functions do not depend on bit depth size.
+Fix regression in 64-bit in r882
+i_mvc needs to be 64-bit when used with a 64-bit memory pointer
+omit redundant mc after non-rdo dct size decision, and in b-direct rdo
+Fix memory leak when using select_every filter
+build: Add dependencies on x86inc.asm/x86util.asm for all .asm files
+
+This is a little bit overzealous, but errs on the side of caution.
+Generating full dependency information is also possible, but slightly
+slows down the build as YASM cannot do it as a sideeffect of compilation.
+Delete all SPARC optimizations
+
+SPARC has been obsolete for a long time and makes little sense as a
+H.264 encoding platform.
+
+Also update authors file.
+Disable i8x8 in lossless
+
+x264's implementation was slightly incorrect due to a vague spec, so some
+decoders decoded video incorrectly.
+
+Minimal impact on compression.
+adjust bitstream buffer sizes for very large frames
+
+
+git-svn-id: svn://svn.videolan.org/x264/trunk@635 df754926-b1dd-0310-bc7b-ec298dee348c

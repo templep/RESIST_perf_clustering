@@ -1,0 +1,67 @@
+Chroma mode decision/subpel for B-frames
+Improves compression ~0.4-1%. Helps more on videos with lots of chroma detail.
+Enabled at subme 9 (preset slower) and higher.
+Full sub8x8 RD mode decision
+Small speed penalty with p4x4 enabled, but significant quality gain at subme >= 6
+As before, gain is proportional to the amount of p4x4 actually useful in a given input at the given bitrate.
+Fix intra refresh with subme < 6
+Also improve the quality of intra masking.
+MBAFF: Disable adaptive MBAFF when subme 0 is used
+Further reduce code size in bime
+~7-8 kilobytes saved, ~0.6% faster subme 9.
+New "superfast" preset, much faster intra analysis
+
+Especially at the fastest settings, intra analysis was taking up the majority of MB analysis time.
+This patch takes a ton more shortcuts at the fastest encoding settings, decreasing compression 0.5-5% but improving speed greatly.
+Also rearrange the fastest presets a bit: now we have ultrafast, superfast, veryfast, faster.
+superfast is the old veryfast (but much faster due to this patch).
+veryfast is between the old veryfast and faster.
+faster is the same as before except with MB-tree on.
+
+Encoding with subme >= 5 should be unaffected by this patch.
+Avoid a redundant qpel check in lookahead with subme <= 1.
+Much faster CAVLC residual coding
+Use a VLC table for common levelcodes instead of constructing them on-the-spot
+Branchless version of i_trailing calculation (2x faster on Nehalem)
+Completely remove array_non_zero_count and instead use the count calculated in level/run coding.  Note: this slightly changes output with subme > 7 due to different nonzero counts being stored during qpel RD.
+MMX code for predictor rounding/clipping
+Faster predictor checking at subme < 3.
+Faster mv predictor checking at subme < 3
+Simplify the predicted MV cost check.
+Fix trellis 2 + subme >= 8
+Trellis didn't return a boolean value as it was supposed to.
+Regression in r2143-5.
+More lookahead optimizations
+Under subme 1, don't do any qpel search at all and round temporal MVs accordingly.
+Drop internal subme with subme 1 to do fullpel predictor checks only.
+Other minor optimizations.
+r1548 broke subme < 3 + p8x8/b8x8
+Caused significantly worse compression.  Preset-wise, only affected veryfast.
+Fixed by not modifying mvc in-place.
+Rework subme system, add RD refinement in B-frames
+The new system is as follows: subme6 is RD in I/P frames, subme7 is RD in all frames, subme8 is RD refinement in I/P frames, and subme9 is RD refinement in all frames.
+subme6 == old subme6, subme7 == old subme6+brdo, subme8 == old subme7+brdo, subme9 == no equivalent
+--b-rdo has, accordingly, been removed.  --bime has also been removed, and instead enabled automatically at subme >= 5.
+RD refinement in B-frames (subme9) includes both qpel-RD and an RD version of bime.
+Psychovisually optimized rate-distortion optimization and trellis
+The latter, psy-trellis, is disabled by default and is reserved as experimental; your mileage may vary.
+Default subme is raised to 6 so that psy RD is on by default.
+Much more accurate B-skip detection at 2 < subme < 7
+Use the same method that x264 uses for P-skip detection.
+This significantly improves quality (1-6%), but at a significant speed cost as well (5-20%).
+It also may have a very positive visual effect in cases where the inaccurate skip detection resulted in slightly-off vectors in B-frames.
+This could cause slight blurring or non-smooth motion in low-complexity frames at high quantizers.
+Not all instances of this problem are solved: the only universal solution is non-locally-optimal mode decision, which x264 does not currently have.
+
+subme >= 7 or <= 2 are unaffected.
+Fix subpel iteration counts with B-frame analysis and subme 6/8
+Since subme 6 means "like subme 5, except RD on P-frames", B-frame analysis
+shouldn't use the RD subpel counts at subme 6.  Similarly with subme 8.
+Slightly faster (and very marginally worse) compression at subme 6 and 8.
+Deblock-aware RD
+Small quality gain (~0.5%) at lower bitrates, potentially larger with QPRD.
+May help more with psy, maybe not.
+Enabled at subme >= 9.  Small speed cost (a few %).
+Don't force fast-intra for subme < 3
+
+It have caused significant quality hit without any meaningful (if any) speed up.
