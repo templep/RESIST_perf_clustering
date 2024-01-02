@@ -94,11 +94,11 @@ def load_x264(data_dir="../data/"):
     # metadata = {}
 
     meas_matrix, _ = load_all_csv(
-        os.path.join(data_dir, "res_ugc"), ext="csv", with_names=True
+        os.path.join(data_dir, "x264"), ext="csv", with_names=True
     )
     meas_matrix["elapsedtime"] = meas_matrix["elapsedtime"].apply(format_time)
     input_properties = pd.read_csv(
-        os.path.join(data_dir, "res_ugc_properties.csv")
+        os.path.join(data_dir, "others", "properties.csv")
     )  # Does not match all inputs from perf_matrix?
     del input_properties["id"]
 
