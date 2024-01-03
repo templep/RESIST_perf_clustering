@@ -98,7 +98,7 @@ def load_x264(data_dir="../data/"):
     )
     meas_matrix["elapsedtime"] = meas_matrix["elapsedtime"].apply(format_time)
     input_properties = pd.read_csv(
-        os.path.join(data_dir, "others", "properties.csv")
+        os.path.join(data_dir, "x264", "others", "properties.csv")
     )  # Does not match all inputs from perf_matrix?
     del input_properties["id"]
 
